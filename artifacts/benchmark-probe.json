@@ -1,0 +1,29 @@
+{
+  "blender": "5.2.0 LTS",
+  "build_hash": "fbe6228777e7",
+  "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "logical_cpus": 24,
+  "schema": 1,
+  "requested_particles": 512,
+  "particle_max": 512,
+  "target_faces": 2000,
+  "actual_triangles": 1980,
+  "frames": 3,
+  "fps": 24,
+  "minimum_substeps": 8,
+  "actual_substeps": {
+    "9": 1,
+    "16": 1
+  },
+  "timing_scope": "simulation + realized render mesh + one diagnostic vertex; excludes metric readback",
+  "first_frame_ms": 39.66280000167899,
+  "median_ms": 63.81975000113016,
+  "p95_ms": 81.16210000298452,
+  "max_ms": 81.16210000298452,
+  "peak_process_memory_bytes": 259080192,
+  "max_relative_volume_error": 0.0,
+  "max_limited_particles": 0,
+  "trail_max": 0,
+  "trails_implemented": false
+}
