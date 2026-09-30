@@ -1,6 +1,6 @@
 # GPU connected water — proposed visual increment
 
-Status: draft for user review. Product code is unchanged.
+Status: approved by the user on 2026-09-30. Implementation planning authorized.
 
 ## Intended result
 
