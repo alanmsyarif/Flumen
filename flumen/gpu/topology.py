@@ -117,7 +117,7 @@ def build_topology(source,support_radius:float,target_edge:float,vertex_budget=1
 
 @wp.func
 def compatible_faces(support:wp.array(dtype=int,ndim=2),a:int,b:int):
-    forward=False; backward=False
+    forward=bool(False); backward=bool(False)
     if a>=0 and b>=0 and a<support.shape[0] and b<support.shape[0]:
         for k in range(64):
             if support[a,k]==b: forward=True

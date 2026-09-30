@@ -52,6 +52,16 @@ class FrameStats:
     limited_count: int
     solver_ms: float = 0.0
     transfer_ms: float = 0.0
+    interaction_ms: float = 0.0
+    reconstruction_ms: float = 0.0
+    neighbor_overflow: int = 0
+    merged_pairs: int = 0
+    proxy_vertices: int = 0
+    water_vertices: int = 0
+    water_triangles: int = 0
+    coarsening_factor: float = 1.0
+    unrepresented_volume: float = 0.0
+    rendered_volume_error: float = 0.0
 
 
 class ParticlePool:
