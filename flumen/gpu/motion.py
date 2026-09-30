@@ -11,7 +11,8 @@ def tangent(v: wp.vec3, n: wp.vec3):
 
 @wp.kernel
 def integrate(d: ParticleArrays, mesh: wp.uint64, island_meshes: wp.array(dtype=wp.uint64),
-              face_islands: wp.array(dtype=int), gravity: wp.vec3, frame_dt: float,
+              face_islands: wp.array(dtype=int), local_to_global: wp.array(dtype=int),
+              island_offsets: wp.array(dtype=int), gravity: wp.vec3, frame_dt: float,
               minimum: int, travel_limit: float, resistance: float, adhesion: float,
               capture_distance: float, capture_speed: float, turn_cos: float,
               lifetime: float, kill_height: float, ledger: wp.array(dtype=wp.float64),
@@ -73,7 +74,7 @@ def integrate(d: ParticleArrays, mesh: wp.uint64, island_meshes: wp.array(dtype=
                         p = q
                         n = next_n
                         v = tangent(v,n)
-                        d.face[i] = query.face
+                        d.face[i] = local_to_global[island_offsets[d.island[i]]+query.face]
                         d.bary[i] = wp.vec2(query.u,query.v)
                     else:
                         v = wp.vec3(0.0)
@@ -132,7 +133,8 @@ def advance(pool, source, config, dt: float) -> None:
         return
     pool.step_count.zero_()
     wp.launch(integrate,pool.capacity,inputs=[pool.data,source.mesh.id,source.island_handles,
-        source.islands,wp.vec3(*config.gravity),dt,config.minimum_substeps,config.max_travel,
+        source.islands,source.local_to_global,source.island_offsets,
+        wp.vec3(*config.gravity),dt,config.minimum_substeps,config.max_travel,
         config.resistance,config.adhesion,config.capture_distance,config.capture_speed,
         cos(config.normal_turn_limit*pi/180),config.lifetime,config.kill_height,pool.ledger,
         pool.step_count],device=pool.device)

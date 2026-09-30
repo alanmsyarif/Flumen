@@ -29,6 +29,12 @@ class DisplayBatch:
     positions: np.ndarray
     radii: np.ndarray
     ids: np.ndarray
+    normals: np.ndarray | None = None
+    velocities: np.ndarray | None = None
+    volumes: np.ndarray | None = None
+    states: np.ndarray | None = None
+    faces: np.ndarray | None = None
+    islands: np.ndarray | None = None
 
 
 @dataclass
@@ -70,6 +76,12 @@ class ParticlePool:
         self.display_ids = wp.zeros(self.capacity,dtype=wp.int64,device=self.device)
         self.host_display = wp.zeros(self.capacity,dtype=wp.vec4,device='cpu',pinned=True)
         self.host_ids = wp.zeros(self.capacity,dtype=wp.int64,device='cpu',pinned=True)
+        self.display_aux={}
+        self.host_aux={}
+        for name,dtype in [('normals',wp.vec3),('velocities',wp.vec3),('volumes',float),
+                           ('states',int),('faces',int),('islands',int)]:
+            self.display_aux[name]=wp.zeros(self.capacity,dtype=dtype,device=self.device)
+            self.host_aux[name]=wp.zeros(self.capacity,dtype=dtype,device='cpu',pinned=True)
         self.next_id = 0
         self.substeps = 0
         self.solver_ms = self.transfer_ms = 0.0
@@ -79,6 +91,7 @@ class ParticlePool:
         self.counters = self.ledger = self.step_count = None
         self.summary = self.read_count = self.display = self.display_ids = None
         self.host_display = self.host_ids = None
+        self.display_aux.clear(); self.host_aux.clear()
 
 
 @wp.kernel
@@ -92,7 +105,10 @@ def summarize_kernel(d: ParticleArrays, summary: wp.array(dtype=wp.float64)):
 
 @wp.kernel
 def gather_kernel(d: ParticleArrays, prefix: wp.array(dtype=int), display: wp.array(dtype=wp.vec4),
-                  ids: wp.array(dtype=wp.int64), count: wp.array(dtype=int)):
+                  ids: wp.array(dtype=wp.int64), count: wp.array(dtype=int),
+                  normals:wp.array(dtype=wp.vec3),velocities:wp.array(dtype=wp.vec3),
+                  volumes:wp.array(dtype=float),states:wp.array(dtype=int),
+                  faces:wp.array(dtype=int),islands:wp.array(dtype=int)):
     i=wp.tid()
     if i == 0:
         last=d.active.shape[0]-1
@@ -103,6 +119,12 @@ def gather_kernel(d: ParticleArrays, prefix: wp.array(dtype=int), display: wp.ar
         if d.state[i] == 0: p+=d.normal[i]*radius
         display[prefix[i]]=wp.vec4(p[0],p[1],p[2],radius)
         ids[prefix[i]]=d.ids[i]
+        normals[prefix[i]]=d.normal[i]
+        velocities[prefix[i]]=d.velocity[i]
+        volumes[prefix[i]]=d.volume[i]
+        states[prefix[i]]=d.state[i]
+        faces[prefix[i]]=d.face[i]
+        islands[prefix[i]]=d.island[i]
 
 
 def read_stats(pool, frame) -> FrameStats:
@@ -119,12 +141,15 @@ def read_stats(pool, frame) -> FrameStats:
 def snapshot(pool) -> DisplayBatch:
     array_scan(pool.data.active,pool.prefix,inclusive=False)
     wp.launch(gather_kernel,pool.capacity,inputs=[pool.data,pool.prefix,pool.display,
-              pool.display_ids,pool.read_count],device=pool.device)
+              pool.display_ids,pool.read_count,*pool.display_aux.values()],device=pool.device)
     count=int(pool.read_count.numpy()[0])
     if count:
         wp.copy(pool.host_display,pool.display,count=count)
         wp.copy(pool.host_ids,pool.display_ids,count=count)
+        for name,array in pool.display_aux.items():
+            wp.copy(pool.host_aux[name],array,count=count)
         wp.synchronize_device(pool.device)
     display=pool.host_display.numpy()[:count]
     return DisplayBatch(np.ascontiguousarray(display[:,:3]),np.ascontiguousarray(display[:,3]),
-                        pool.host_ids.numpy()[:count].copy())
+                        pool.host_ids.numpy()[:count].copy(),
+                        *(array.numpy()[:count].copy() for array in pool.host_aux.values()))
