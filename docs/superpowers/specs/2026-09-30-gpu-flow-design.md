@@ -1,6 +1,6 @@
 # GPU surface flow and continuous emission
 
-Status: proposed written design, awaiting user review.
+Status: approved by the user on 2026-09-30; implementation planning authorized.
 
 ## Outcome and scope
 
@@ -101,4 +101,4 @@ Warp/CUDA was selected because it supplies GPU kernels and mesh-query primitives
 - NVIDIA Warp: https://github.com/NVIDIA/warp
 - Warp mesh collision example: https://github.com/NVIDIA/warp/blob/main/warp/examples/core/example_mesh.py
 
-Written-spec approval is the next workflow checkpoint; implementation planning follows that review.
+Written-spec approval was received on 2026-09-30. The implementation plan is the next workflow checkpoint.
