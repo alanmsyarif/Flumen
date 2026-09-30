@@ -6,6 +6,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+if (ROOT / '.gpu-deps').is_dir():
+    sys.path.insert(0, str(ROOT / '.gpu-deps'))
 sys.path.insert(0, str(ROOT / 'tests' / 'blender'))
 parser = argparse.ArgumentParser()
 parser.add_argument('--pattern', default='test_*.py')

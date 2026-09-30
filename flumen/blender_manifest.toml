@@ -1,8 +1,8 @@
 schema_version = "1.0.0"
 id = "flumen"
-version = "0.0.2"
+version = "0.0.3"
 name = "Flumen"
-tagline = "Procedural surface drainage paths with Geometry Nodes"
+tagline = "Surface drainage and live CUDA particle flow"
 maintainer = "Alan Syarif"
 type = "add-on"
 tags = ["Geometry Nodes"]

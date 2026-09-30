@@ -1,8 +1,40 @@
 # Flumen
 
-Experimental **Blender 5.2 LTS Geometry Nodes** surface flow and drips, version 0.0.2.
+Experimental **Blender 5.2 LTS** surface flow and drips, version 0.0.3.
 
-Two workflows are available: static drainage paths, and animated particles with surface resistance, adhesion, detachment, collision, and native baking. The animated workflow is a procedural approximation inspired by *A Practical Guide to Thin Film and Drips Simulation* (SIGGRAPH 2019). It does not implement the paper's FLIP/APIC solver or liquid films.
+## GPU Flow: continuous emission
+
+Install the Windows GPU extension built with the bundled Warp 1.17.0 wheel.
+Select a stationary mesh, open **3D View > Sidebar > Flumen > GPU Flow**, and
+choose **Create GPU Flow**. Use **Continuous** and **Particles Per Frame** to keep
+emitting, or **Burst** to emit once. Emission Start/End are inclusive. Lifetime
+and Capacity bound the live particle pool; expired slots are reused, and births
+beyond capacity are dropped without building up a backlog.
+
+Play from the scene start. After changing settings or collision geometry, click
+**Reset GPU Flow**. Backward seeks replay from the start; repeated evaluation of
+the same frame does not emit again. Source masks can reject samples, so the
+panel reports accepted and rejected births separately. Frame-based rates change
+particles per second when scene FPS changes.
+
+On the local RTX 5050, the 600-frame **1920x1080 solid viewport** acceptance run
+averaged **56.6 FPS**, with **25.02 ms p95** total frame time and 7,743 live drops
+at the end. This fixture uses an 8,192-particle capacity, 64 births/frame, a
+4-second lifetime, and approximately 20,000 collision triangles. See
+[raw viewport evidence](artifacts/benchmark-gpu-viewport.json). Other meshes and
+viewport modes can perform differently; JIT initialization is excluded.
+
+GPU Flow is **live particle preview** on stationary surfaces. It does not yet
+produce the reference video's connected films/rivulets or transport water on
+deforming surfaces. GPU hosts are excluded from offline rendering until a bake
+export workflow is implemented. Existing Geometry Nodes bakes remain available
+through the older Animated Flow workflow described below.
+
+Open [Flumen_GPU_Demo.blend](artifacts/Flumen_GPU_Demo.blend) with the GPU extension
+enabled, then play frames 1-720. The file stores settings; CUDA state is
+reconstructed on playback. See [GPU setup and packaging](docs/GPU_SETUP.md).
+
+Two legacy workflows remain available: static drainage paths, and animated Geometry Nodes particles with surface resistance, adhesion, detachment, collision, and native baking. The animated workflow is a procedural approximation inspired by *A Practical Guide to Thin Film and Drips Simulation* (SIGGRAPH 2019). It does not implement the paper's FLIP/APIC solver or liquid films.
 
 ## Try the baked demo
 

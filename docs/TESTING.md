@@ -1,5 +1,29 @@
 # Testing
 
+## GPU backend
+
+Set up the pinned wheel as described in `GPU_SETUP.md`. The explicit CUDA suite
+uses Blender's Python/NumPy and fails when CUDA is unavailable; it never treats
+a skipped device check as success. Development runners add `.gpu-deps` explicitly.
+
+```text
+blender --background --factory-startup --python-exit-code 1 --python scripts/run_cuda_tests.py
+blender --background --factory-startup --python-exit-code 1 --python scripts/run_blender_tests.py -- --pattern test_gpu_*.py
+python scripts/smoke_gpu_package.py artifacts/extension-stage-gpu
+blender --background --factory-startup --python-exit-code 1 --python scripts/benchmark_gpu.py
+blender --factory-startup --python-exit-code 1 --python scripts/benchmark_gpu_viewport.py
+```
+
+The viewport command launches an instrumented GUI session, resizes only its own
+window, samples 600 completed draws, writes the report, and exits. Run it without
+another GPU workload. Background reports explicitly exclude drawing. Numerical
+fixtures use 1e-4 position tolerances and replay comparisons use 1e-6. Volume
+tests require error <= max(1e-15, emitted_volume * 1e-5). A 10,000-frame capacity
+saturation test verifies stable allocation and cumulative birth accounting.
+
+The legacy graph suite follows below; the complete Blender suite now also runs
+the GPU host tests and therefore requires the development Warp dependency.
+
 Run pure tests with `python -m pytest -q`. Pytest excludes `tests/blender/`; Blender runtime tests use unittest and need no pytest installation inside Blender.
 
 ```text
