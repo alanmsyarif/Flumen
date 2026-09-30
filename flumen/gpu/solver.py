@@ -3,7 +3,7 @@ from time import perf_counter
 import warp as wp
 from .config import frame_dt
 from .state import ParticlePool, read_stats, snapshot
-from .emission import emit
+from .emission import emit, emit_batch
 from .motion import advance
 
 
@@ -16,7 +16,7 @@ class FlowSolver:
             raise ValueError('GPU Flow requires CUDA')
         self.config,self.source,self.device = config,source,device
         self.start_frame = start_frame
-        self.dt = frame_dt(fps,fps_base)
+        self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
         self.current_frame = None
         self.stats = None
@@ -35,6 +35,8 @@ class FlowSolver:
         for f in range(begin,frame+1):
             if f > self.start_frame:
                 advance(self.pool,self.source,self.config,self.dt)
+            else:
+                emit_batch(self.pool,self.source,self.config,f,self.config.initial_coating_count)
             emit(self.pool,self.source,self.config,f)
         wp.synchronize_device(self.device.alias)
         self.pool.solver_ms = (perf_counter()-start)*1000

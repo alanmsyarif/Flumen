@@ -32,3 +32,12 @@ class GPUSettingsTests(unittest.TestCase):
             host=SimpleNamespace(flumen_gpu=SimpleNamespace(**values))
             with self.subTest(value=value), self.assertRaises(ValueError):
                 config_for(host)
+
+    def test_new_controls_preserve_types_and_legacy_defaults(self):
+        cfg=config_for(self.host)
+        self.assertEqual((cfg.display_mode,cfg.interactions_enabled,cfg.time_scale,cfg.initial_coating_count),('DROPS',False,1.,0))
+        self.host.flumen_gpu.interactions_enabled=True
+        self.host.flumen_gpu.display_mode='CONNECTED'
+        cfg=config_for(self.host)
+        self.assertIs(cfg.interactions_enabled,True)
+        self.assertEqual(cfg.display_mode,'CONNECTED')

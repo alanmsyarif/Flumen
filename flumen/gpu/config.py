@@ -31,15 +31,33 @@ class FlowConfig:
     minimum_substeps: int = 8
     max_travel: float = .002
     normal_turn_limit: float = 60.0
+    display_mode: str = 'DROPS'
+    interactions_enabled: bool = False
+    time_scale: float = 1.0
+    initial_coating_count: int = 0
+    interaction_radius_scale: float = 4.0
+    cohesion_acceleration: float = 2.0
+    repulsion_acceleration: float = 20.0
+    surface_damping: float = 10.0
+    merge_distance_scale: float = .25
+    maximum_merged_radius_scale: float = 4.0
+    reconstruction_scale: float = 1.0
+    wetness_deposit_rate: float = 5.0
+    wetness_drying_rate: float = .1
 
     def validate(self) -> None:
         if self.mode not in ('BURST', 'CONTINUOUS'):
             raise ValueError('Emission mode must be BURST or CONTINUOUS')
+        if self.display_mode not in ('DROPS','CONNECTED'):
+            raise ValueError('Display mode must be DROPS or CONNECTED')
+        if not isinstance(self.interactions_enabled,bool):
+            raise ValueError('interactions_enabled must be a Boolean')
         for name, low, high in (
             ('particles_per_frame', 0, 2**31-1), ('burst_count', 0, 2**31-1),
             ('capacity', 1, 1_000_000), ('seed', 0, 2**31-1),
             ('emission_start', -1_000_000, 1_000_000),
             ('emission_end', -1_000_000, 1_000_000), ('minimum_substeps', 1, 64),
+            ('initial_coating_count', 0, 2**31-1),
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -53,6 +71,11 @@ class FlowConfig:
             ('adhesion', 0., 1000.), ('capture_distance', .00001, .1),
             ('capture_speed', 0., 100.), ('max_travel', .00001, .1),
             ('normal_turn_limit', 1., 89.),
+            ('time_scale', .01, 2.), ('interaction_radius_scale',1.,16.),
+            ('cohesion_acceleration',0.,100.), ('repulsion_acceleration',0.,100.),
+            ('surface_damping',0.,1000.), ('merge_distance_scale',0.,1.),
+            ('maximum_merged_radius_scale',1.,8.), ('reconstruction_scale',.5,4.),
+            ('wetness_deposit_rate',0.,1000.), ('wetness_drying_rate',0.,1000.),
         ):
             value = getattr(self, name)
             if not isfinite(value) or not low <= value <= high:
