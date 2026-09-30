@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Flumen",
     "author": "Alan Syarif / project scaffold",
-    "version": (0, 0, 2),
+    "version": (0, 0, 3),
     "blender": (5, 2, 0),
     "location": "3D View > Sidebar > Flumen",
     "description": "Procedural surface drainage paths using Geometry Nodes",

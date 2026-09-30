@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 .gpu-deps/
 .gpu-wheels/
+artifacts/extension-stage-gpu*/
+artifacts/flumen-0.0.3*.zip
+artifacts/*.log

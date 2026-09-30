@@ -1,6 +1,6 @@
 [project]
 name = "flumen"
-version = "0.0.2"
+version = "0.0.3"
 description = "Procedural surface drainage R&D for Blender Geometry Nodes"
 requires-python = ">=3.11"
 

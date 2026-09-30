@@ -26,7 +26,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--save')
     parser.add_argument('--package', type=Path, help='Test a staged extension instead of development source')
+    parser.add_argument('--gpu', action='store_true', help='Require GPU playback using only staged wheels')
+    parser.add_argument('--wheel-env', type=Path, help='Wheel environment managed by the parent smoke runner')
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    if args.gpu:
+        if not args.package or not args.wheel_env:
+            parser.error('Use scripts/smoke_gpu_package.py to manage the isolated GPU dependency environment')
+        sys.path.insert(0, str(args.wheel_env))
     if args.package:
         spec = importlib.util.spec_from_file_location('sf_staged', args.package / '__init__.py',
                                                     submodule_search_locations=[str(args.package)])
@@ -61,6 +67,22 @@ def main():
             finally:
                 evaluated.to_mesh_clear()
         print('SURFACE_FLOW_ANIMATED_SMOKE_TEST_OK')
+        if args.gpu:
+            runtime = __import__(package.__name__+'.gpu_runtime', fromlist=['create_gpu_host'])
+            scene=bpy.context.scene
+            scene.frame_set(scene.frame_start)
+            gpu_host=runtime.create_gpu_host(obj,scene)
+            gpu_host.flumen_gpu.source_start=0
+            gpu_host.flumen_gpu.source_softness=0
+            runtime.reset_host(gpu_host)
+            for frame in range(1,6): scene.frame_set(frame)
+            solver=runtime.get_runtime(gpu_host,scene)
+            assert solver.device.alias.startswith('cuda:'), 'GPU smoke fell back to CPU'
+            assert solver.stats.accepted==320, 'Continuous emission did not advance'
+            assert len(gpu_host.data.vertices)>0, 'GPU display is empty'
+            import warp
+            assert Path(warp.__file__).is_relative_to(args.wheel_env), 'Smoke used an external Warp install'
+            print('SURFACE_FLOW_GPU_SMOKE_TEST_OK',solver.device,solver.stats)
     finally:
         package.unregister()
     if args.save:
