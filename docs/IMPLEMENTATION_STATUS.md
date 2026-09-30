@@ -1,4 +1,39 @@
-# Implementation status - 0.0.2 / M0-M1
+# Implementation status - GPU 0.0.3 and legacy M0-M1
+
+## GPU Flow, 2026-09-30
+
+The separate Warp 1.17.0 CUDA backend provides stationary surface particles,
+continuous/burst emission, bounded slot recycling, analytic tangent drag,
+detachment, approximate ray/proximity collision, deterministic integer-frame
+replay, volume accounting, and Blender instanced preview output.
+
+Verified on Blender 5.2.0 LTS, embedded Python 3.13.13, NVIDIA RTX 5050
+(8151 MiB), driver 591.86. Warp reports CUDA Toolkit 12.9 / driver API 13.1.
+
+The actual 1920x1080 solid viewport run completed 600 sequential draws at
+**89.44 FPS average, 12.10 ms median, 12.75 ms p95**. It used 8192 slots,
+64 births/frame, 4-second lifetime and a 102-segment/100-ring sphere. Across
+frames 1-720 (120 warmup + 600 measured), all 46,080 requested births were
+accepted; the final state had 7,744 live particles, no travel-limited particles,
+and zero observed volume-ledger discrepancy. Peak process working set was
+715 MiB. Whole-device VRAM usage was 1802 MiB including other applications;
+this is not the solver's isolated allocation.
+
+The measurement waits for each POST_PIXEL draw and synchronizes graphics using
+a framebuffer readback before requesting the next frame. CUDA is synchronized
+before display transfer. Wall-clock throughput includes scheduling and redraw;
+initialization/JIT is excluded. Raw samples, exact controls and hardware metadata
+are in `artifacts/benchmark-gpu-viewport.json`. Background-only scaling results
+are in `artifacts/benchmark-gpu-{2048,8192,32768}.json` and never count as proof
+of viewport FPS. The 30 FPS acceptance gate passed for this fixture, not for
+arbitrary meshes, shaders, or particle counts.
+
+GPU Flow is a particle foundation. Connected films, merging/cohesion, persistent
+rivulets, deforming collision surfaces, and portable GPU bake export remain
+unimplemented. GPU hosts are hidden from offline rendering by default. Use the
+legacy workflow for native Geometry Nodes baking.
+
+## Legacy 0.0.2 / M0-M1 evidence
 
 Verified locally on 2026-09-25 with **Blender 5.2.0 LTS**, build `fbe6228777e7`, on Windows 11 and an Intel Core i7-13700 (24 logical CPUs).
 

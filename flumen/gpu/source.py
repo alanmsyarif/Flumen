@@ -110,9 +110,9 @@ def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
         tuple(up), float(heights.min()), float(np.ptp(heights)), config, alias)
 
 
-def sample_source(source, seed, frame, candidate_ids, max_attempts=16, output=None):
-    count = len(candidate_ids)
-    if count > source.config.capacity or not 1 <= max_attempts <= 16:
+def sample_source(source, seed, frame, candidate_ids, max_attempts=16, output=None, count=None):
+    count = len(candidate_ids) if count is None else count
+    if not 0 <= count <= min(len(candidate_ids),source.config.capacity) or not 1 <= max_attempts <= 16:
         raise ValueError('Sampling must stay within capacity and 16 attempts')
     out = output if output is not None else Samples(count, source.device)
     if count:

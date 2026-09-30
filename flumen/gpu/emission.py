@@ -73,7 +73,8 @@ def emit(pool, source, config, frame) -> None:
     wp.launch(prepare,pool.capacity,inputs=[pool.data,pool.mask,pool.candidate_ids,
               wp.int64(pool.next_id)],device=pool.device)
     array_scan(pool.mask,pool.prefix,inclusive=False)
-    samples = sample_source(source,config.seed,frame,pool.candidate_ids,output=pool.samples)
+    samples = sample_source(source,config.seed,frame,pool.candidate_ids,output=pool.samples,
+                            count=min(requested,pool.capacity))
     wp.launch(births,pool.capacity,inputs=[pool.data,pool.mask,pool.prefix,wp.int64(requested),
         wp.int64(pool.next_id),4*pi/3*config.radius**3,samples.positions,samples.normals,
         samples.faces,samples.bary,samples.islands,samples.valid,pool.counters,pool.ledger],device=pool.device)
