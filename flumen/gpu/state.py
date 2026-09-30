@@ -1,5 +1,5 @@
 """Fixed-capacity CUDA storage and explicit diagnostics/readback."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import pi
 import numpy as np
 import warp as wp
@@ -35,6 +35,26 @@ class DisplayBatch:
     states: np.ndarray | None = None
     faces: np.ndarray | None = None
     islands: np.ndarray | None = None
+
+
+@dataclass
+class MeshBatch:
+    vertices: np.ndarray
+    normals: np.ndarray
+    triangles: np.ndarray
+    diagnostics: dict = field(default_factory=dict)
+
+    @classmethod
+    def empty(cls,**diagnostics):
+        return cls(np.empty((0,3),np.float32),np.empty((0,3),np.float32),
+                   np.empty((0,3),np.int32),diagnostics)
+
+
+@dataclass
+class WaterGeometry:
+    attached: MeshBatch
+    free: MeshBatch
+    diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass

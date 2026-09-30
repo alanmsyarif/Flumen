@@ -18,7 +18,8 @@ class FlowSolver:
         self.start_frame = start_frame
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
-        self.topology=self.interaction=self.surface=None
+        self.topology=self.interaction=self.surface=self.geometry_buffers=None
+        self._water_cache=None
         try:
             if config.interactions_enabled or config.display_mode=='CONNECTED':
                 from .topology import build_topology
@@ -30,9 +31,12 @@ class FlowSolver:
             if config.display_mode=='CONNECTED':
                 from .surface import build_surface
                 self.surface=build_surface(self.topology,config,device)
+                from .surface_mesh import GeometryBuffers
+                self.geometry_buffers=GeometryBuffers(len(self.topology.triangles),device.alias)
         except Exception:
             self.pool.close()
             if self.interaction is not None: self.interaction.close()
+            if self.surface is not None: self.surface.close()
             if self.topology is not None: self.topology.close()
             raise
         self.current_frame = None
@@ -67,6 +71,7 @@ class FlowSolver:
         wp.synchronize_device(self.device.alias)
         self.pool.solver_ms = (perf_counter()-start)*1000
         self.current_frame = frame
+        self._water_cache=None
         self.stats = read_stats(self.pool,frame)
         if self.surface is not None:
             summary=self.surface.summary.numpy()
@@ -91,6 +96,7 @@ class FlowSolver:
         self.pool = ParticlePool(self.config,self.device)
         if self.surface is not None: self.surface.reset()
         self.current_frame = self.stats = None
+        self._water_cache=None
 
     def close(self):
         if self.pool is not None:
@@ -99,11 +105,28 @@ class FlowSolver:
             self.source.close()
         if self.interaction is not None: self.interaction.close()
         if self.surface is not None: self.surface.close()
+        if self.geometry_buffers is not None: self.geometry_buffers.close()
         if self.topology is not None: self.topology.close()
-        self.interaction=self.topology=self.surface=None
+        self.interaction=self.topology=self.surface=self.geometry_buffers=None
+        self._water_cache=None
         self.pool = self.source = self.stats = None
 
     def surface_snapshot(self):
         if self.surface is None: return None
         from .surface import snapshot_surface
         return snapshot_surface(self.surface)
+
+    def water_snapshot(self):
+        if self.surface is None: return None
+        if self._water_cache is None:
+            from .state import WaterGeometry,MeshBatch
+            from .surface_mesh import build_attached_mesh
+            start=perf_counter()
+            attached=build_attached_mesh(self.topology,self.surface,self.config,self.geometry_buffers)
+            self._water_cache=WaterGeometry(attached,MeshBatch.empty(),attached.diagnostics.copy())
+            if self.stats is not None:
+                self.stats.reconstruction_ms=(perf_counter()-start)*1000
+                self.stats.water_vertices=len(attached.vertices)
+                self.stats.water_triangles=len(attached.triangles)
+                self.stats.rendered_volume_error=attached.diagnostics.get('rendered_volume_error',0.)
+        return self._water_cache
