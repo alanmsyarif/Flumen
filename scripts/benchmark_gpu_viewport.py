@@ -16,6 +16,7 @@ from dataclasses import asdict
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'.gpu-deps'),str(ROOT/'examples'),str(ROOT/'scripts')]
 import bpy
+bpy.context.preferences.view.show_splash=False
 import gpu
 from create_gpu_demo import create_demo
 from flumen.gpu_runtime import get_runtime

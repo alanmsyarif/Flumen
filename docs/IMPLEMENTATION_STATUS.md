@@ -11,12 +11,12 @@ Verified on Blender 5.2.0 LTS, embedded Python 3.13.13, NVIDIA RTX 5050
 (8151 MiB), driver 591.86. Warp reports CUDA Toolkit 12.9 / driver API 13.1.
 
 The actual 1920x1080 solid viewport run completed 600 sequential draws at
-**89.44 FPS average, 12.10 ms median, 12.75 ms p95**. It used 8192 slots,
+**56.59 FPS average, 16.70 ms median, 25.02 ms p95**. It used 8192 slots,
 64 births/frame, 4-second lifetime and a 102-segment/100-ring sphere. Across
 frames 1-720 (120 warmup + 600 measured), all 46,080 requested births were
-accepted; the final state had 7,744 live particles, no travel-limited particles,
+accepted; the final state had 7,743 live particles, no travel-limited particles,
 and zero observed volume-ledger discrepancy. Peak process working set was
-715 MiB. Whole-device VRAM usage was 1802 MiB including other applications;
+672 MiB. Whole-device VRAM usage was 6211 MiB including other applications;
 this is not the solver's isolated allocation.
 
 The measurement waits for each POST_PIXEL draw and synchronizes graphics using
@@ -27,6 +27,13 @@ are in `artifacts/benchmark-gpu-viewport.json`. Background-only scaling results
 are in `artifacts/benchmark-gpu-{2048,8192,32768}.json` and never count as proof
 of viewport FPS. The 30 FPS acceptance gate passed for this fixture, not for
 arbitrary meshes, shaders, or particle counts.
+
+Final verification: 38 Python tests, 17 actual CUDA tests, and 52 Blender tests
+passed. The independent review identified one UI endpoint rounding bug; a
+Blender regression reproduced seven affected endpoints before the adapter fix.
+All endpoints now round-trip, while invalid/nonfinite settings remain rejected.
+The final staged package passed manifest validation and CUDA/legacy smoke tests.
+The viewport benchmark explicitly disables Blender's startup splash.
 
 GPU Flow is a particle foundation. Connected films, merging/cohesion, persistent
 rivulets, deforming collision surfaces, and portable GPU bake export remain

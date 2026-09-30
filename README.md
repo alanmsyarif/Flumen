@@ -18,7 +18,7 @@ panel reports accepted and rejected births separately. Frame-based rates change
 particles per second when scene FPS changes.
 
 On the local RTX 5050, the 600-frame **1920x1080 solid viewport** acceptance run
-averaged **89.4 FPS**, with **12.75 ms p95** total frame time and 7,744 live drops
+averaged **56.6 FPS**, with **25.02 ms p95** total frame time and 7,743 live drops
 at the end. This fixture uses an 8,192-particle capacity, 64 births/frame, a
 4-second lifetime, and approximately 20,000 collision triangles. See
 [raw viewport evidence](artifacts/benchmark-gpu-viewport.json). Other meshes and

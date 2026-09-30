@@ -1,5 +1,6 @@
 """Persistent Blender settings; runtime/device resources live elsewhere."""
 from dataclasses import fields
+from struct import pack, unpack
 import bpy
 from .gpu.config import FlowConfig
 
@@ -42,6 +43,14 @@ for field in fields(FlowConfig):
 def config_for(host):
     settings=host.flumen_gpu
     values={field.name:getattr(settings,field.name) for field in fields(FlowConfig)}
+    # RNA stores float32: recover only exact endpoint representations, without
+    # relaxing validation for arbitrary out-of-range or nonfinite inputs.
+    for field in fields(FlowConfig):
+        if isinstance(field.default,float):
+            for endpoint in _bounds[field.name]:
+                if values[field.name] == unpack('f',pack('f',endpoint))[0]:
+                    values[field.name]=endpoint
+                    break
     values['gravity']=tuple(values['gravity'])
     config=FlowConfig(**values)
     config.validate()
