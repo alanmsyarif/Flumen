@@ -80,6 +80,9 @@ class ParticlePool:
         self.counters = wp.zeros(4,dtype=wp.int64,device=self.device)
         self.ledger = wp.zeros(2,dtype=wp.float64,device=self.device)
         self.step_count = wp.zeros(1,dtype=int,device=self.device)
+        self.merge_partners=wp.full(self.capacity,-1,dtype=int,device=self.device)
+        self.merge_count=wp.zeros(1,dtype=int,device=self.device)
+        self.neighbor_overflow_count=wp.zeros(1,dtype=int,device=self.device)
         self.summary = wp.zeros(3,dtype=wp.float64,device=self.device)
         self.read_count = wp.zeros(1,dtype=int,device=self.device)
         self.display = wp.zeros(self.capacity,dtype=wp.vec4,device=self.device)
@@ -99,6 +102,7 @@ class ParticlePool:
     def close(self):
         self.data = self.samples = self.mask = self.prefix = self.candidate_ids = None
         self.counters = self.ledger = self.step_count = None
+        self.merge_partners=self.merge_count=self.neighbor_overflow_count=None
         self.summary = self.read_count = self.display = self.display_ids = None
         self.host_display = self.host_ids = None
         self.display_aux.clear(); self.host_aux.clear()
@@ -143,9 +147,12 @@ def read_stats(pool, frame) -> FrameStats:
     counts = pool.counters.numpy()
     ledger = pool.ledger.numpy()
     summary = pool.summary.numpy()
-    return FrameStats(frame,int(summary[0]),*(int(x) for x in counts),float(ledger[0]),
+    stats=FrameStats(frame,int(summary[0]),*(int(x) for x in counts),float(ledger[0]),
         float(summary[1]),float(ledger[1]),int(pool.step_count.numpy()[0]),
         int(summary[2]),pool.solver_ms,pool.transfer_ms)
+    stats.merged_pairs=int(pool.merge_count.numpy()[0])
+    stats.neighbor_overflow=int(pool.neighbor_overflow_count.numpy()[0])
+    return stats
 
 
 def snapshot(pool) -> DisplayBatch:

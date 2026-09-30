@@ -10,8 +10,11 @@ class InteractionBuffers:
         self.velocities=wp.zeros(capacity,dtype=wp.vec3,device=device)
         self.forces=wp.zeros(capacity,dtype=wp.vec3,device=device)
         self.steps=wp.zeros(1,dtype=int,device=device)
+        from .neighbors import NeighborBuffers
+        self.neighbors=NeighborBuffers(capacity,device)
 
     def close(self):
+        self.neighbors.close()
         self.positions=self.velocities=self.forces=self.steps=None
 
 

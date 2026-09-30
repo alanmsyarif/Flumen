@@ -4,7 +4,7 @@ import warp as wp
 from .config import frame_dt
 from .state import ParticlePool, read_stats, snapshot
 from .emission import emit, emit_batch
-from .motion import advance
+from .motion import advance, advance_coupled
 
 
 class FlowSolver:
@@ -18,6 +18,19 @@ class FlowSolver:
         self.start_frame = start_frame
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
+        self.topology=self.interaction=None
+        try:
+            if config.interactions_enabled or config.display_mode=='CONNECTED':
+                from .topology import build_topology
+                self.topology=build_topology(source,config.radius*config.interaction_radius_scale,
+                    1.5*config.radius*config.reconstruction_scale)
+            if config.interactions_enabled:
+                from .interaction import InteractionBuffers
+                self.interaction=InteractionBuffers(config.capacity,device.alias)
+        except Exception:
+            self.pool.close()
+            if self.topology is not None: self.topology.close()
+            raise
         self.current_frame = None
         self.stats = None
 
@@ -34,7 +47,10 @@ class FlowSolver:
         start = perf_counter()
         for f in range(begin,frame+1):
             if f > self.start_frame:
-                advance(self.pool,self.source,self.config,self.dt)
+                if self.interaction is None:
+                    advance(self.pool,self.source,self.config,self.dt)
+                else:
+                    advance_coupled(self.pool,self.source,self.topology,self.config,self.interaction,self.dt)
             else:
                 emit_batch(self.pool,self.source,self.config,f,self.config.initial_coating_count)
             emit(self.pool,self.source,self.config,f)
@@ -65,4 +81,7 @@ class FlowSolver:
             self.pool.close()
         if self.source is not None:
             self.source.close()
+        if self.interaction is not None: self.interaction.close()
+        if self.topology is not None: self.topology.close()
+        self.interaction=self.topology=None
         self.pool = self.source = self.stats = None
