@@ -18,7 +18,7 @@ class FlowSolver:
         self.start_frame = start_frame
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
-        self.topology=self.interaction=self.surface=self.geometry_buffers=None
+        self.topology=self.interaction=self.surface=self.geometry_buffers=self.free_buffers=None
         self._water_cache=None
         try:
             if config.interactions_enabled or config.display_mode=='CONNECTED':
@@ -33,10 +33,14 @@ class FlowSolver:
                 self.surface=build_surface(self.topology,config,device)
                 from .surface_mesh import GeometryBuffers
                 self.geometry_buffers=GeometryBuffers(len(self.topology.triangles),device.alias)
+                from .free_mesh import FreeMeshBuffers
+                self.free_buffers=FreeMeshBuffers(config.capacity,device.alias,self.geometry_buffers)
         except Exception:
             self.pool.close()
             if self.interaction is not None: self.interaction.close()
             if self.surface is not None: self.surface.close()
+            if self.geometry_buffers is not None: self.geometry_buffers.close()
+            if self.free_buffers is not None: self.free_buffers.close()
             if self.topology is not None: self.topology.close()
             raise
         self.current_frame = None
@@ -106,8 +110,9 @@ class FlowSolver:
         if self.interaction is not None: self.interaction.close()
         if self.surface is not None: self.surface.close()
         if self.geometry_buffers is not None: self.geometry_buffers.close()
+        if self.free_buffers is not None: self.free_buffers.close()
         if self.topology is not None: self.topology.close()
-        self.interaction=self.topology=self.surface=self.geometry_buffers=None
+        self.interaction=self.topology=self.surface=self.geometry_buffers=self.free_buffers=None
         self._water_cache=None
         self.pool = self.source = self.stats = None
 
@@ -119,14 +124,29 @@ class FlowSolver:
     def water_snapshot(self):
         if self.surface is None: return None
         if self._water_cache is None:
-            from .state import WaterGeometry,MeshBatch
+            from .state import WaterGeometry
             from .surface_mesh import build_attached_mesh
+            from .free_mesh import build_free_mesh
             start=perf_counter()
             attached=build_attached_mesh(self.topology,self.surface,self.config,self.geometry_buffers)
-            self._water_cache=WaterGeometry(attached,MeshBatch.empty(),attached.diagnostics.copy())
+            free=build_free_mesh(self.pool,self.source,self.config,
+                self.geometry_buffers.vertex_budget-len(attached.vertices),
+                self.geometry_buffers.triangle_budget-len(attached.triangles),self.free_buffers)
+            represented=attached.diagnostics.get('represented_volume',0.)+free.diagnostics.get('represented_volume',0.)
+            volume=attached.diagnostics.get('mesh_volume',0.)+free.diagnostics.get('mesh_volume',0.)
+            diagnostics=dict(rendered_volume_error=abs(volume-represented)/max(represented,1.e-20),
+                coarsening_factor=max(attached.diagnostics.get('coarsening_factor',1.),free.diagnostics.get('coarsening_factor',1.)),
+                volumetric_samples=free.diagnostics.get('volumetric_samples',0),
+                unrepresented_volume=float(self.surface.summary.numpy()[1])+free.diagnostics.get('unrepresented_volume',0.),
+                excluded_volume=attached.diagnostics.get('excluded_volume',0.))
+            errors=[m.diagnostics['error'] for m in (attached,free) if 'error' in m.diagnostics]
+            if errors: diagnostics['error']='; '.join(errors)
+            self._water_cache=WaterGeometry(attached,free,diagnostics)
             if self.stats is not None:
                 self.stats.reconstruction_ms=(perf_counter()-start)*1000
-                self.stats.water_vertices=len(attached.vertices)
-                self.stats.water_triangles=len(attached.triangles)
-                self.stats.rendered_volume_error=attached.diagnostics.get('rendered_volume_error',0.)
+                self.stats.water_vertices=len(attached.vertices)+len(free.vertices)
+                self.stats.water_triangles=len(attached.triangles)+len(free.triangles)
+                self.stats.rendered_volume_error=diagnostics['rendered_volume_error']
+                self.stats.coarsening_factor=diagnostics['coarsening_factor']
+                self.stats.unrepresented_volume=diagnostics['unrepresented_volume']
         return self._water_cache
