@@ -62,13 +62,14 @@ class ParticlePool:
         self.samples = Samples(self.capacity,self.device)
         self.counters = wp.zeros(4,dtype=wp.int64,device=self.device)
         self.ledger = wp.zeros(2,dtype=wp.float64,device=self.device)
+        self.step_count = wp.zeros(1,dtype=int,device=self.device)
         self.next_id = 0
         self.substeps = 0
         self.solver_ms = self.transfer_ms = 0.0
 
     def close(self):
         self.data = self.samples = self.mask = self.prefix = self.candidate_ids = None
-        self.counters = self.ledger = None
+        self.counters = self.ledger = self.step_count = None
 
 
 def read_stats(pool, frame) -> FrameStats:
@@ -77,7 +78,7 @@ def read_stats(pool, frame) -> FrameStats:
     active = pool.data.active.numpy().astype(bool)
     volume = pool.data.volume.numpy()[active].sum(dtype=np.float64)
     return FrameStats(frame,int(active.sum()),*(int(x) for x in counts),float(ledger[0]),
-        float(volume),float(ledger[1]),pool.substeps,
+        float(volume),float(ledger[1]),int(pool.step_count.numpy()[0]),
         int(pool.data.limited.numpy()[active].sum()),pool.solver_ms,pool.transfer_ms)
 
 
