@@ -18,7 +18,7 @@ class FlowSolver:
         self.start_frame = start_frame
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
-        self.topology=self.interaction=None
+        self.topology=self.interaction=self.surface=None
         try:
             if config.interactions_enabled or config.display_mode=='CONNECTED':
                 from .topology import build_topology
@@ -27,8 +27,12 @@ class FlowSolver:
             if config.interactions_enabled:
                 from .interaction import InteractionBuffers
                 self.interaction=InteractionBuffers(config.capacity,device.alias)
+            if config.display_mode=='CONNECTED':
+                from .surface import build_surface
+                self.surface=build_surface(self.topology,config,device)
         except Exception:
             self.pool.close()
+            if self.interaction is not None: self.interaction.close()
             if self.topology is not None: self.topology.close()
             raise
         self.current_frame = None
@@ -47,6 +51,9 @@ class FlowSolver:
         start = perf_counter()
         for f in range(begin,frame+1):
             if f > self.start_frame:
+                if self.surface is not None:
+                    from .surface import advance_wetness
+                    advance_wetness(self.surface,self.config,self.dt)
                 if self.interaction is None:
                     advance(self.pool,self.source,self.config,self.dt)
                 else:
@@ -54,10 +61,18 @@ class FlowSolver:
             else:
                 emit_batch(self.pool,self.source,self.config,f,self.config.initial_coating_count)
             emit(self.pool,self.source,self.config,f)
+            if self.surface is not None:
+                from .surface import update_surface
+                update_surface(self.surface,self.pool,self.source,self.config,0)
         wp.synchronize_device(self.device.alias)
         self.pool.solver_ms = (perf_counter()-start)*1000
         self.current_frame = frame
         self.stats = read_stats(self.pool,frame)
+        if self.surface is not None:
+            summary=self.surface.summary.numpy()
+            self.stats.proxy_vertices=len(self.topology.vertices)
+            self.stats.coarsening_factor=self.topology.coarsening_factor
+            self.stats.unrepresented_volume=float(summary[1])
         return self.stats
 
     def snapshot(self):
@@ -74,6 +89,7 @@ class FlowSolver:
         if self.pool is not None:
             self.pool.close()
         self.pool = ParticlePool(self.config,self.device)
+        if self.surface is not None: self.surface.reset()
         self.current_frame = self.stats = None
 
     def close(self):
@@ -82,6 +98,12 @@ class FlowSolver:
         if self.source is not None:
             self.source.close()
         if self.interaction is not None: self.interaction.close()
+        if self.surface is not None: self.surface.close()
         if self.topology is not None: self.topology.close()
-        self.interaction=self.topology=None
+        self.interaction=self.topology=self.surface=None
         self.pool = self.source = self.stats = None
+
+    def surface_snapshot(self):
+        if self.surface is None: return None
+        from .surface import snapshot_surface
+        return snapshot_surface(self.surface)
