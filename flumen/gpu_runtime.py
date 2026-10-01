@@ -86,6 +86,7 @@ def get_runtime(host,scene):
             from .gpu_water_display import release_water_display
             release_water_display(host)
             host['sf_gpu_water_display']=False
+            host['sf_gpu_geometry_error']=''
             if not any(m.type=='NODES' and m.node_group and m.node_group.get('sf_gpu_display') for m in host.modifiers):
                 create_display(host)
         set_material(host,host.flumen_gpu.material)

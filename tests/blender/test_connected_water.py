@@ -36,6 +36,11 @@ class ConnectedWaterTests(unittest.TestCase):
         self.assertIsNot(wet.data,self.source.data)
         self.assertIn('sf_wetness',wet.data.attributes)
         self.assertEqual(len(wet.data.vertices),len(solver.topology.vertices))
+        for obj in (host,wet):
+            self.assertGreater(len(obj.data.edges),0,'Viewport meshes need valid edge topology')
+            normals=np.empty(len(obj.data.corner_normals)*3,np.float32)
+            obj.data.corner_normals.foreach_get('vector',normals)
+            np.testing.assert_allclose(np.linalg.norm(normals.reshape(-1,3),axis=1),1.,atol=1e-5)
         self.assertEqual(len([o for o in self.scene.objects if o.get('sf_gpu_wet_owned')]),1)
         self.assertEqual(list(self.source.data.materials),mats)
         np.testing.assert_array_equal(np.array([v.co[:] for v in self.source.data.vertices]),coords)

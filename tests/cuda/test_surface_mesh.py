@@ -64,6 +64,17 @@ class SurfaceMeshTests(unittest.TestCase):
         self.assertEqual(len(mesh.vertices),0)
         self.assertIn('budget',mesh.diagnostics['error'].lower())
 
+    def test_shared_patch_vertices_fit_the_actual_budget(self):
+        f=list(self.make())
+        f[2].thickness.assign(np.full(len(f[1].vertices),.0001,np.float32))
+        limit=2*len(f[1].vertices)
+        f[3]=f[4].GeometryBuffers(len(f[1].triangles),require_cuda().alias,vertex_budget=limit)
+        self.addCleanup(f[3].close)
+        mesh=self.mesh(f)
+        self.assertGreater(len(mesh.triangles),0)
+        self.assertLessEqual(len(mesh.vertices),limit)
+        self.assertAlmostEqual(signed_volume(mesh),1e-8,delta=5e-10)
+
     def test_disconnected_curved_surfaces_do_not_bridge(self):
         f=self.make(); cfg,_,_,_,api=f
         vertices=np.array([[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]],np.float32)*.01

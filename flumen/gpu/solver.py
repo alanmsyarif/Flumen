@@ -137,7 +137,7 @@ class FlowSolver:
             diagnostics=dict(rendered_volume_error=abs(volume-represented)/max(represented,1.e-20),
                 coarsening_factor=max(attached.diagnostics.get('coarsening_factor',1.),free.diagnostics.get('coarsening_factor',1.)),
                 volumetric_samples=free.diagnostics.get('volumetric_samples',0),
-                unrepresented_volume=float(self.surface.summary.numpy()[1])+free.diagnostics.get('unrepresented_volume',0.),
+                unrepresented_volume=float(self.surface.summary.numpy()[1])+attached.diagnostics.get('unrepresented_volume',0.)+free.diagnostics.get('unrepresented_volume',0.),
                 excluded_volume=attached.diagnostics.get('excluded_volume',0.))
             errors=[m.diagnostics['error'] for m in (attached,free) if 'error' in m.diagnostics]
             if errors: diagnostics['error']='; '.join(errors)

@@ -17,8 +17,8 @@ def _write_mesh(mesh,vertices,triangles,normals=None):
         mesh.polygons.foreach_set('loop_total',np.full(t,3,np.int32))
         mesh.polygons.foreach_set('use_smooth',np.ones(t,bool))
     mesh.update()
-    if t and normals is not None:
-        mesh.normals_split_custom_set_from_vertices(np.asarray(normals,np.float32))
+    # Shared vertices let Blender compute smooth normals from the live shape.
+    # Importing per-vertex custom normals through RNA dominates frame time.
 
 
 def _remove_proxy(proxy):
@@ -68,6 +68,7 @@ def create_water_display(host,topology):
         mesh.attributes.new('sf_wetness','FLOAT','POINT')
         mesh.materials.append(create_wet_material(host.flumen_gpu.source))
         proxy=bpy.data.objects.new('Flumen Wetness',mesh)
+        proxy.color=host.flumen_gpu.source.color[:]
         proxy['sf_gpu_wet_owned']=True; proxy['sf_gpu_owner']=host
         proxy.hide_render=True; proxy.hide_select=True
         for collection in host.users_collection: collection.objects.link(proxy)
@@ -85,10 +86,16 @@ def create_water_display(host,topology):
 def update_water_display(host,geometry,fields):
     if host.data.users>1: host.data=host.data.copy()
     a,f=geometry.attached,geometry.free
-    vertices=np.concatenate((a.vertices,f.vertices))
-    normals=np.concatenate((a.normals,f.normals))
-    triangles=np.concatenate((a.triangles,f.triangles+len(a.vertices)))
-    _write_mesh(host.data,vertices,triangles,normals)
+    # Free output is a GPU triangle stream. Share exact coincident samples for
+    # smooth native viewport normals without moving the reconstructed surface.
+    if len(f.vertices):
+        free_vertices,inverse=np.unique(f.vertices,axis=0,return_inverse=True)
+        free_triangles=inverse[f.triangles].astype(np.int32)
+    else:
+        free_vertices=f.vertices; free_triangles=f.triangles
+    vertices=np.concatenate((a.vertices,free_vertices))
+    triangles=np.concatenate((a.triangles,free_triangles+len(a.vertices)))
+    _write_mesh(host.data,vertices,triangles)
     proxy=host.get('sf_gpu_wet_proxy')
     if proxy is None or proxy.get('sf_gpu_owner')!=host:
         raise RuntimeError('Wetness output missing. Reset GPU Flow.')
