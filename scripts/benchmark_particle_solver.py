@@ -27,6 +27,11 @@ def main():
     parser.add_argument('--warmup',type=int,default=2)
     parser.add_argument('--minimum-substeps',type=int,default=8)
     parser.add_argument('--interactions',action='store_true')
+    parser.add_argument('--backend',choices=['LEGACY','FIELD'],default='LEGACY')
+    parser.add_argument('--distribution',choices=['attached','free','mixed','dense'],default='attached')
+    parser.add_argument('--field-spacing',type=float,default=.001)
+    parser.add_argument('--contact-spacing',type=float,default=.002)
+    parser.add_argument('--resistance',type=float,default=5.)
     parser.add_argument('--merge-distance',type=float,default=.25)
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
@@ -34,7 +39,9 @@ def main():
     cfg=FlowConfig(capacity=args.capacity,initial_coating_count=args.capacity,particles_per_frame=0,
         source_start=0,source_softness=0,radius=.0001,time_scale=.5,lifetime=1000,
         minimum_substeps=args.minimum_substeps,interactions_enabled=args.interactions,
-        display_mode='DROPS',merge_distance_scale=args.merge_distance)
+        display_mode='POINTS' if args.backend=='FIELD' else 'DROPS',merge_distance_scale=args.merge_distance,
+        solver_backend=args.backend,field_spacing=args.field_spacing,contact_spacing=args.contact_spacing,
+        resample_target=args.capacity if args.backend=='FIELD' else 0,kill_height=-10000,resistance=args.resistance)
     cfg.validate()
     bpy.ops.mesh.primitive_monkey_add()
     obj=bpy.context.object; obj.scale=(.115,)*3; obj.location.z=.15
@@ -44,9 +51,28 @@ def main():
     device=require_cuda(); source=build_source(*arrays,cfg,device)
     solver=None
     try:
+        prepare_start=time.perf_counter()
         solver=FlowSolver(cfg,source,device)
+        preparation_seconds=time.perf_counter()-prepare_start
         setup=time.perf_counter(); solver.seek(1)
         setup_seconds=time.perf_counter()-setup
+        if args.distribution!='attached':
+            import warp as wp
+            states=solver.pool.data.state.numpy()
+            positions=solver.pool.data.position.numpy()
+            if args.distribution=='free':
+                states[:]=1; positions[:,2]+=1.
+            elif args.distribution=='mixed':
+                states[::2]=1; positions[::2,2]+=1.
+            else:
+                # All particles concentrate at a real source anchor, not a decimated proxy.
+                positions[:]=positions[0]
+                for name in ('face','bary','island','normal'):
+                    array=getattr(solver.pool.data,name); values=array.numpy(); values[:]=values[0]; array.assign(values)
+            solver.pool.data.state.assign(states); solver.pool.data.position.assign(positions)
+            if solver.field is not None:
+                from flumen.gpu.field_solver import deposit_attached
+                deposit_attached(solver.pool,solver.prepared,solver.field)
         for frame in range(2,2+args.warmup): solver.seek(frame)
         samples=[]; stages=[]
         for frame in range(2+args.warmup,2+args.warmup+args.frames):
@@ -60,6 +86,9 @@ def main():
         final=stages[-1]
         ledger_error=abs(final['emitted_volume']-final['live_volume']-final['removed_volume'])/max(final['emitted_volume'],1.e-20)
         report=dict(measurement_kind='solver_only_feasibility',viewport_tested=False,
+            backend=args.backend,distribution=args.distribution,preparation_seconds=preparation_seconds,
+            field_minimum_edge=solver.prepared.chart.min_edge if solver.prepared else None,
+            field_operator_spacing=solver.prepared.chart.operator_spacing if solver.prepared else None,
             reconstruction_enabled=False,setup_seconds=setup_seconds,warmup_frames=args.warmup,
             samples_ms=samples,stages=stages,mean_ms=statistics.mean(samples),
             p95_ms=ordered[ceil(len(ordered)*.95)-1],max_ms=max(samples),

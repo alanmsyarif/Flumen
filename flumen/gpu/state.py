@@ -97,6 +97,8 @@ class FrameStats:
     owned_array_bytes: int = 0
     field_nodes: int = 0
     contact_samples: int = 0
+    attached_count: int = 0
+    free_count: int = 0
 
 
 class ParticlePool:
@@ -118,8 +120,8 @@ class ParticlePool:
         self.merge_partners=wp.full(self.capacity,-1,dtype=int,device=self.device)
         self.merge_count=wp.zeros(1,dtype=int,device=self.device)
         self.neighbor_overflow_count=wp.zeros(1,dtype=int,device=self.device)
-        self.summary = wp.zeros(3,dtype=wp.float64,device=self.device)
-        self.summary_blocks = wp.zeros(((self.capacity+255)//256,3),dtype=wp.float64,device=self.device)
+        self.summary = wp.zeros(4,dtype=wp.float64,device=self.device)
+        self.summary_blocks = wp.zeros(((self.capacity+255)//256,4),dtype=wp.float64,device=self.device)
         self.read_count = wp.zeros(1,dtype=int,device=self.device)
         self.display = wp.zeros(self.capacity,dtype=wp.vec4,device=self.device)
         self.display_ids = wp.zeros(self.capacity,dtype=wp.int64,device=self.device)
@@ -133,9 +135,13 @@ class ParticlePool:
             self.host_aux[name]=wp.zeros(self.capacity,dtype=dtype,device='cpu',pinned=True)
         self.next_id = 0
         self.substeps = 0
+        self.field_motion = self.field_aggregate = None
         self.solver_ms = self.transfer_ms = 0.0
 
     def close(self):
+        if self.field_motion is not None: self.field_motion.close()
+        if self.field_aggregate is not None: self.field_aggregate.close()
+        self.field_motion = self.field_aggregate = None
         self.data = self.samples = self.mask = self.prefix = self.candidate_ids = None
         self.counters = self.ledger = self.step_count = None
         self.merge_partners=self.merge_count=self.neighbor_overflow_count=None
@@ -153,6 +159,7 @@ def summarize_kernel(d: ParticleArrays, blocks: wp.array(dtype=wp.float64,ndim=2
         wp.atomic_add(blocks,group,0,wp.float64(1.0))
         wp.atomic_add(blocks,group,1,wp.float64(d.volume[i]))
         wp.atomic_add(blocks,group,2,wp.float64(d.limited[i]))
+        if d.state[i] == 0: wp.atomic_add(blocks,group,3,wp.float64(1.))
 
 
 @wp.kernel
@@ -189,7 +196,7 @@ def gather_kernel(d: ParticleArrays, prefix: wp.array(dtype=int), display: wp.ar
 def read_stats(pool, frame) -> FrameStats:
     pool.summary_blocks.zero_()
     wp.launch(summarize_kernel,pool.capacity,inputs=[pool.data,pool.summary_blocks],device=pool.device)
-    wp.launch(summarize_blocks,3,inputs=[pool.summary_blocks,pool.summary],device=pool.device)
+    wp.launch(summarize_blocks,4,inputs=[pool.summary_blocks,pool.summary],device=pool.device)
     counts = pool.counters.numpy()
     ledger = pool.ledger.numpy()
     summary = pool.summary.numpy()
@@ -198,6 +205,8 @@ def read_stats(pool, frame) -> FrameStats:
         int(summary[2]),pool.solver_ms,pool.transfer_ms)
     stats.merged_pairs=int(pool.merge_count.numpy()[0])
     stats.neighbor_overflow=int(pool.neighbor_overflow_count.numpy()[0])
+    stats.attached_count=int(summary[3])
+    stats.free_count=stats.live_count-stats.attached_count
     return stats
 
 

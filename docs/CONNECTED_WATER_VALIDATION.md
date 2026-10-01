@@ -28,7 +28,7 @@ surface-tension gradients. Its physical graph Laplacian is
 eight implicit Jacobi iterations per substep; resistance/damping use exponential
 integration. Existing pressure/cohesion acceleration caps are reported when
 activated. The stability bound includes tangent speed, gravity-height waves
-and capillary waves on the minimum chart edge; more than 64 steps raises an
+and capillary waves on the effective operator spacing; more than 64 steps raises an
 explicit error rather than skipping elapsed time. Particle state owns volume;
 field volume remains a derived deposit. Dry nodes cannot invent flow. Wetness
 uses exact physical-time exponential deposition/drying and zero-dt is inert.
@@ -37,6 +37,27 @@ Actual CUDA fixtures verify flat-film equilibrium, downhill analytic drag,
 viscous energy decay, restoring capillary response, bounded step failure,
 source locality, subspacing volume transfer and physical-time wetness. These
 unit fixtures are numerical evidence, not million-particle viewport acceptance.
+
+A first million-particle Suzanne probe exposed a 487-step demand from narrow
+source triangles. Numerical gradient/Laplacian operators are now regularized at
+half the requested field spacing (or the larger minimum chart edge), retaining
+exact source geometry/anchors. Triangle gradient scaling preserves constant-field
+equilibrium; nonnegative graph weights use the same minimum metric length.
+The raw minimum source/chart edge and operator spacing are distinct diagnostics.
+This intentionally limits numerical detail below the chosen field resolution;
+finer offline meshing does not restore that simulated detail.
+
+The retained [FIELD attached probe](../artifacts/field-million-attached-probe.json)
+uses one million live particles, 2 mm field/contact spacing and resistance 60:
+two warmup plus ten measured solver-only intervals average 24.73 FPS, with
+finite state and ledger relative error 6.49e-10. This predates the latest CUDA
+graph reuse and duplicate-transfer removal; their performance is unmeasured.
+The probe does not draw particles and misses the real-time target. Stage timings
+are incomplete wall/launch diagnostics; owned-array memory reporting is pending.
+Free, mixed and dense FIELD characterization and the 120+600 actual full-count
+viewport gate have not run. Checkpoint suites: 68 Python, 73 CUDA and 61 Blender
+tests passed. Work is paused at the user's request; see the
+[resume checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md).
 
 ## Fixture and reproduction
 

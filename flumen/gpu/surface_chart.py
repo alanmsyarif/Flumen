@@ -40,6 +40,7 @@ class SurfaceChart:
     coarsening_factor: float
     barrier_count: int
     min_edge: float
+    operator_spacing: float
     points_gpu: object
     triangles_gpu: object
     areas_gpu: object
@@ -120,11 +121,17 @@ def build_chart(source, spacing: float, node_budget: int = 100000) -> SurfaceCha
     unit = cross/twice_area[:,None]
     gradients = np.stack((np.cross(unit,p[:,2]-p[:,1]),np.cross(unit,p[:,0]-p[:,2]),
                           np.cross(unit,p[:,1]-p[:,0])),axis=1)/twice_area[:,None,None]
+    # Source triangles retain exact anchors; numerical derivatives need not resolve
+    # source slivers below the requested field scale. One common triangle factor
+    # preserves the zero gradient of a constant scalar.
+    operator_spacing=max(float(lengths.min()),.5*spacing)
+    gradient_scale=np.minimum(1.,2./(operator_spacing*np.linalg.norm(gradients,axis=2).max(axis=1)))
+    gradients*=gradient_scale[:,None,None]
     raw = np.concatenate((triangles[:,[0,1]],triangles[:,[1,2]],triangles[:,[2,0]]))
     edges,inverse = np.unique(np.sort(raw,axis=1),axis=0,return_inverse=True)
     length_sq = np.sum((vertices[edges[:,0]]-vertices[edges[:,1]])**2,axis=1)
     weights = np.zeros(len(edges),np.float64)
-    np.add.at(weights,inverse,np.tile(triangle_areas/3,3)/length_sq[inverse])
+    np.add.at(weights,inverse,np.tile(triangle_areas/3,3)/np.maximum(length_sq[inverse],operator_spacing**2))
     rows = [[] for _ in vertices]
     for (a,b),weight in zip(edges,weights):
         rows[a].append((int(b),weight)); rows[b].append((int(a),weight))
@@ -134,7 +141,7 @@ def build_chart(source, spacing: float, node_budget: int = 100000) -> SurfaceCha
     neighbor_weights = np.array([w for row in rows for j,w in sorted(row)],np.float32)
     device = source.device
     return SurfaceChart(vertices,triangles,areas,normals.astype(np.float32),provenance,adjacency,
-        level,effective,max(1.,effective/spacing),barriers,float(np.sqrt(length_sq.min())),
+        level,effective,max(1.,effective/spacing),barriers,float(np.sqrt(length_sq.min())),operator_spacing,
         wp.array(vertices,dtype=wp.vec3,device=device),wp.array(triangles,dtype=wp.vec3i,device=device),
         wp.array(areas,dtype=wp.float64,device=device),wp.array(normals,dtype=wp.vec3,device=device),
         wp.array(adjacency,dtype=int,device=device),wp.array(edges,dtype=wp.vec2i,device=device),

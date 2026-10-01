@@ -110,6 +110,7 @@ class FieldBuffers:
         self.metrics = wp.zeros(3,dtype=wp.float64,device=device)
         self.force_limited = wp.zeros(1,dtype=int,device=device)
         self.capacity = 0
+        self.graphs = {}
         self.keys=self.values=self.amounts=self.incoming=self.partial_volume=self.partial_momentum=None
 
     def reserve(self, capacity):
@@ -124,6 +125,8 @@ class FieldBuffers:
         self.capacity = capacity
 
     def close(self):
+        wp.synchronize_device(self.device)
+        self.graphs.clear()
         for name in tuple(self.__dict__):
             if name not in ('device','capacity'): setattr(self,name,None)
 
@@ -240,7 +243,7 @@ def _gradient(chart, buffers, scalar, output):
         chart.triangle_areas_gpu,chart.areas_gpu,output],device=buffers.device)
 
 
-def evolve_field(prepared, buffers: FieldBuffers, config, dt: float) -> FieldStep:
+def evolve_field(prepared, buffers: FieldBuffers, config, dt: float, *, use_graph=True) -> FieldStep:
     if not isfinite(dt) or dt < 0: raise ValueError('Field dt must be nonnegative and finite')
     if dt == 0: return FieldStep()
     start = perf_counter(); chart = prepared.chart
@@ -249,10 +252,36 @@ def evolve_field(prepared, buffers: FieldBuffers, config, dt: float) -> FieldSte
         buffers.volume,buffers.metrics],device=buffers.device)
     height,speed,volume = buffers.metrics.numpy()
     wave = sqrt(max(0.,np.linalg.norm(config.gravity)*height))
-    capillary_wave = sqrt(config.surface_tension/(1000.*chart.min_edge))
-    needed = max(1,ceil(dt*(speed+wave+capillary_wave)/(.25*chart.min_edge)))
+    capillary_wave = sqrt(config.surface_tension/(1000.*chart.operator_spacing))
+    needed = max(1,ceil(dt*(speed+wave+capillary_wave)/(.25*chart.operator_spacing)))
     if needed > 64:
         raise RuntimeError(f'Field stability requires {needed} steps, exceeding 64; refine time settings')
+    # Round upward only: seven bounded graph variants, each at least as conservative.
+    needed = 1 << (needed-1).bit_length()
+    if use_graph:
+        key = (needed,dt,config.gravity,config.surface_tension,config.repulsion_acceleration,
+               config.cohesion_acceleration,config.resistance,config.surface_damping,
+               config.field_viscosity,config.wetness_deposit_rate,config.wetness_drying_rate)
+        graph = buffers.graphs.get(key)
+        if graph is None:
+            from .surface import wetness_step
+            wp.load_module(module=wetness_step.module,device=buffers.device)
+            if len(buffers.graphs) >= 8:
+                wp.synchronize_device(buffers.device)
+                buffers.graphs.clear()
+            with wp.ScopedCapture(device=buffers.device) as capture:
+                _evolve_kernels(chart,buffers,config,needed,dt)
+            graph = capture.graph
+            buffers.graphs[key] = graph
+        wp.capture_launch(graph)
+    else:
+        _evolve_kernels(chart,buffers,config,needed,dt)
+    limited = int(buffers.force_limited.numpy()[0])
+    unsupported = float(buffers.unsupported.numpy()[0])
+    return FieldStep(needed,float(volume),unsupported,limited,(perf_counter()-start)*1000)
+
+
+def _evolve_kernels(chart, buffers, config, needed, dt):
     buffers.force_limited.zero_()
     wp.launch(laplacian_field,len(chart.vertices),inputs=[buffers.thickness,chart.areas_gpu,
         chart.offsets_gpu,chart.neighbors_gpu,chart.neighbor_weights_gpu,buffers.laplacian],device=buffers.device)
@@ -274,9 +303,6 @@ def evolve_field(prepared, buffers: FieldBuffers, config, dt: float) -> FieldSte
     from .surface import wetness_step
     wp.launch(wetness_step,len(chart.vertices),inputs=[buffers.thickness,buffers.wetness,dt,
         config.wetness_deposit_rate,config.wetness_drying_rate],device=buffers.device)
-    limited = int(buffers.force_limited.numpy()[0])
-    unsupported = float(buffers.unsupported.numpy()[0])
-    return FieldStep(needed,float(volume),unsupported,limited,(perf_counter()-start)*1000)
 
 
 def sample_field(prepared, buffers: FieldBuffers, face: int, bary: tuple):

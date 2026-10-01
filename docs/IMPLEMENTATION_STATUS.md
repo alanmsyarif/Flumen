@@ -9,13 +9,16 @@ reference gate still fails: coating/channels are too coarse and patchy.
 
 The user now permits offline final meshing and requires interactive particle
 simulation at one million particles. Current solver-only probes are below that
-target: 22–25 FPS for independent particles and much slower dense interactions.
-Meshing is not responsible for those solver-only costs. The revised
-[design for review](superpowers/specs/2026-10-01-million-particle-preview-design.md)
-proposes GPU surface fields, point drawing and deferred meshing; it is not yet
-implemented. No particle bake, version 0.0.4 package or release is delivered.
+target: the latest measured FIELD attached probe reached 24.73 FPS with one
+million live particles, before graph reuse and duplicate-transfer removal.
+The revised [design](superpowers/specs/2026-10-01-million-particle-preview-design.md)
+and plan are approved. Surface preparation and field dynamics are complete;
+particle transport/aggregation is in progress. Point drawing and offline baking
+remain unfinished. Work is paused at the user's request; the
+[saved checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md) records
+the resume steps. No version 0.0.4 package or release is delivered.
 
-Verified source: 66 Python, 54 CUDA and 59 Blender tests. Raw results,
+Verified checkpoint: 68 Python, 73 CUDA and 61 Blender tests. Raw results,
 reproduction and limitations are in
 [Connected validation](CONNECTED_WATER_VALIDATION.md). The earlier 0.0.3
 measurements below are historical Drops evidence, not proof for this increment.

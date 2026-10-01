@@ -90,3 +90,30 @@ class FieldDynamicsTests(unittest.TestCase):
         b.thickness.zero_(); b.volume.zero_()
         self.evolve(p,b,cfg,.01)
         np.testing.assert_array_equal(b.velocity.numpy(),np.zeros_like(p.chart.vertices))
+
+    def test_sliver_source_respects_requested_field_resolution(self):
+        cfg=FlowConfig(capacity=8,resistance=0,surface_damping=0,field_viscosity=0)
+        source=build_source([[0,0,0],[.1,0,0],[0,.00001,0]],[[0,1,2]],[0],cfg,require_cuda())
+        p=prepare_source(source,'sliver',.001,.02); self.addCleanup(p.release)
+        b=FieldBuffers(p.chart,source.device); self.addCleanup(b.close)
+        b.thickness.assign([.00001]*len(p.chart.vertices))
+        b.volume.assign(p.chart.areas*.00001)
+        step=self.evolve(p,b,cfg,1/60)
+        self.assertLessEqual(step.substeps,64)
+        np.testing.assert_allclose(b.velocity.numpy(),0,atol=1e-6,rtol=0)
+        self.assertLess(p.chart.min_edge,.00001)
+        self.assertGreaterEqual(p.chart.operator_spacing,.0005)
+
+    def test_graph_and_eager_evolution_match(self):
+        p,a,cfg=self.make(config=FlowConfig(capacity=8,field_viscosity=.001,resistance=5,surface_damping=0))
+        b=FieldBuffers(p.chart,p.source.device); self.addCleanup(b.close)
+        b.volume.assign(a.volume.numpy()); b.thickness.assign(a.thickness.numpy())
+        velocity=np.zeros_like(p.chart.vertices); velocity[:,0]=p.chart.vertices[:,0]*10
+        a.velocity.assign(velocity); b.velocity.assign(velocity)
+        from flumen.gpu.field_solver import evolve_field
+        for _ in range(5):
+            evolve_field(p,a,cfg,.01,use_graph=True)
+            evolve_field(p,b,cfg,.01,use_graph=False)
+        np.testing.assert_allclose(a.velocity.numpy(),b.velocity.numpy(),atol=1e-6,rtol=0)
+        np.testing.assert_array_equal(a.volume.numpy(),b.volume.numpy())
+        np.testing.assert_allclose(a.wetness.numpy(),b.wetness.numpy(),atol=1e-6,rtol=0)

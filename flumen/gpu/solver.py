@@ -19,6 +19,8 @@ class FlowSolver:
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
         self.prepared = None
+        self.field = None
+        self._field_step = None
         self.topology=self.interaction=self.surface=self.geometry_buffers=self.free_buffers=None
         self._water_cache=None
         try:
@@ -26,11 +28,19 @@ class FlowSolver:
                 if prepared.source is not source:
                     raise ValueError('Prepared contacts belong to a different source')
                 self.prepared = prepared.retain()
-            if config.interactions_enabled or config.display_mode=='CONNECTED':
+            if config.solver_backend=='FIELD':
+                if self.prepared is None:
+                    from hashlib import sha256
+                    from .prepared import prepare_source
+                    digest=sha256(source.vertices_cpu.tobytes()+source.triangles_cpu.tobytes()+source.islands_cpu.tobytes()).hexdigest()
+                    self.prepared=prepare_source(source,digest,config.field_spacing,config.contact_spacing)
+                from .field_solver import FieldBuffers
+                self.field=FieldBuffers(self.prepared.chart,device.alias)
+            elif config.interactions_enabled or config.display_mode=='CONNECTED':
                 from .topology import build_topology
                 self.topology=build_topology(source,config.radius*config.interaction_radius_scale,
                     1.5*config.radius*config.reconstruction_scale)
-            if config.interactions_enabled:
+            if config.interactions_enabled and config.solver_backend=='LEGACY':
                 from .interaction import InteractionBuffers
                 self.interaction=InteractionBuffers(config.capacity,device.alias)
             if config.display_mode=='CONNECTED':
@@ -48,6 +58,7 @@ class FlowSolver:
             if self.free_buffers is not None: self.free_buffers.close()
             if self.topology is not None: self.topology.close()
             if self.prepared is not None: self.prepared.release()
+            if self.field is not None: self.field.close()
             raise
         self.current_frame = None
         self.stats = None
@@ -64,25 +75,55 @@ class FlowSolver:
         begin = self.start_frame if self.current_frame is None else max(self.start_frame,self.current_frame+1)
         start = perf_counter()
         for f in range(begin,frame+1):
+            self.source.refresh_sampling(self.config)
             if f > self.start_frame:
                 if self.surface is not None:
                     from .surface import advance_wetness
                     advance_wetness(self.surface,self.config,self.dt)
-                if self.interaction is None:
+                if self.field is not None:
+                    from .field_motion import advance_field_particles
+                    from .field_aggregate import aggregate_field_particles
+                    self._field_step=advance_field_particles(self.pool,self.prepared,self.field,self.config,self.dt,
+                                                             reuse_deposit=True)
+                    aggregation_start=perf_counter()
+                    aggregate_field_particles(self.pool,self.prepared,self.config)
+                    self._field_step.aggregation_ms=(perf_counter()-aggregation_start)*1000
+                elif self.interaction is None:
                     advance(self.pool,self.source,self.config,self.dt)
                 else:
                     advance_coupled(self.pool,self.source,self.topology,self.config,self.interaction,self.dt)
             else:
                 emit_batch(self.pool,self.source,self.config,f,self.config.initial_coating_count)
             emit(self.pool,self.source,self.config,f)
+            if self.field is not None:
+                from .field_solver import deposit_attached
+                from .field_aggregate import resample_particles
+                resample_particles(self.pool,self.prepared,self.config.resample_target)
+                deposit_attached(self.pool,self.prepared,self.field)
             if self.surface is not None:
                 from .surface import update_surface
                 update_surface(self.surface,self.pool,self.source,self.config,0)
+            self.current_frame=f
         wp.synchronize_device(self.device.alias)
         self.pool.solver_ms = (perf_counter()-start)*1000
         self.current_frame = frame
         self._water_cache=None
         self.stats = read_stats(self.pool,frame)
+        self.stats.backend=self.config.solver_backend
+        if self.field is not None:
+            self.stats.field_nodes=len(self.prepared.chart.vertices)
+            self.stats.contact_samples=self.prepared.contact.sample_count
+            self.stats.coarsening_factor=self.prepared.chart.coarsening_factor
+            self.stats.unrepresented_volume=float(self.field.unsupported.numpy()[0])
+            if self._field_step is not None:
+                self.stats.field_ms=self._field_step.field_ms
+                self.stats.contact_ms=self._field_step.contact_ms
+                self.stats.aggregation_ms=self._field_step.aggregation_ms
+            if self.pool.field_motion is not None:
+                self.stats.contact_fallback_count=self.pool.field_motion.last_fallback_count
+            if self.pool.field_aggregate is not None:
+                self.stats.merged_pairs=int(self.pool.field_aggregate.merged.numpy()[0])
+                self.stats.resampled_count=int(self.pool.field_aggregate.resampled.numpy()[0])
         if self.interaction is not None:
             self.stats.interaction_ms=self.interaction.timing_ms()
         if self.surface is not None:
@@ -108,12 +149,17 @@ class FlowSolver:
         self.pool = ParticlePool(self.config,self.device)
         if self.surface is not None: self.surface.reset()
         if self.interaction is not None: self.interaction.timing_count=0
+        if self.field is not None:
+            self.field.wetness.zero_(); self.field.velocity.zero_()
+        self._field_step=None
         self.current_frame = self.stats = None
         self._water_cache=None
 
     def close(self):
         if self.pool is not None:
             self.pool.close()
+        if self.field is not None:
+            self.field.close(); self.field=None
         if self.source is not None:
             if self.prepared is not None:
                 self.prepared.release()
