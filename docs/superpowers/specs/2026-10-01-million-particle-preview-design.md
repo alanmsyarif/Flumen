@@ -1,6 +1,6 @@
 # Million-particle interactive editing — revised design
 
-Status: **draft for user review**. This supersedes the real-time *final mesh*
+Status: **approved by the user on 2026-10-01**. This supersedes the real-time *final mesh*
 gate of the approved 2026-09-30 design, following the user's 2026-10-01 direction.
 It does not claim that the new backend or a particle bake already exists.
 
@@ -175,5 +175,7 @@ explicit cache and offline mesher, and package the verified result. Keep each
 stage usable and measured; do not spend time polishing a final mesh while the
 particle solver still misses the interactive budget.
 
-The detailed implementation plan is written after this revised design is
-reviewed. Continue the already selected Native execution method.
+The detailed implementation plan is
+`docs/superpowers/plans/2026-10-01-million-particle-preview.md`.
+The design is approved; the plan awaits review before implementation.
+Continue the already selected Native execution method.

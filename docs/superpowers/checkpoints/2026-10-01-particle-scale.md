@@ -39,8 +39,11 @@ and reproducible generators are retained in source history.
 
 The next proposed architecture is in
 `docs/superpowers/specs/2026-10-01-million-particle-preview-design.md`.
-It is a **draft awaiting review**, not an approved replacement implementation
-plan. It proposes source-local GPU field interactions, lightweight full-count
-point drawing, particle caches and offline meshing. Preserve Native execution
-after approval. Keep the original plan scratch ledger; do not delete it or
-repeat completed Tasks 1–8.
+The user **approved this revised design on 2026-10-01**. It specifies source-local
+GPU field interactions, lightweight full-count point drawing, particle caches
+and offline meshing. The concrete implementation plan is
+`docs/superpowers/plans/2026-10-01-million-particle-preview.md`; **plan review is
+pending**, with Native execution preserved. No FIELD implementation exists yet.
+Keep the original plan scratch ledger; do not delete it or repeat completed
+Tasks 1–8. Once the plan is reviewed, start its Task 1 and carry the old unfinished
+visual/package gates into its Tasks 6–9.
