@@ -41,3 +41,11 @@ class GPUSettingsTests(unittest.TestCase):
         cfg=config_for(self.host)
         self.assertIs(cfg.interactions_enabled,True)
         self.assertEqual(cfg.display_mode,'CONNECTED')
+
+    def test_field_controls_round_trip(self):
+        self.assertTrue(hasattr(self.host.flumen_gpu, 'solver_backend'), 'Field settings missing')
+        self.host.flumen_gpu.display_mode='POINTS'
+        self.host.flumen_gpu.solver_backend='FIELD'
+        self.host.flumen_gpu.resample_target=100
+        cfg=config_for(self.host)
+        self.assertEqual((cfg.solver_backend,cfg.display_mode,cfg.resample_target),('FIELD','POINTS',100))

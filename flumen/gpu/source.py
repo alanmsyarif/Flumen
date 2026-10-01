@@ -74,6 +74,16 @@ class SourceMesh:
     islands_cpu: object
     local_to_global: object
     island_offsets: object
+    evaluated_triangle_ids: object
+
+    def refresh_sampling(self, config):
+        """Refresh physical source controls while retaining collision arrays/BVHs."""
+        config.validate()
+        up = -np.asarray(config.gravity, dtype=np.float64)
+        up /= np.linalg.norm(up)
+        heights = self.vertices_cpu @ up
+        self.up, self.low, self.span = tuple(up), float(heights.min()), float(np.ptp(heights))
+        self.config = config
 
     def close(self):
         self.mesh = None
@@ -81,6 +91,7 @@ class SourceMesh:
         self.island_handles = self.islands = self.cdf = None
         self.vertices_cpu = self.triangles_cpu = self.islands_cpu = None
         self.local_to_global = self.island_offsets = None
+        self.evaluated_triangle_ids = None
 
 
 def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
@@ -119,7 +130,8 @@ def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
         wp.array(islands,dtype=int,device=alias), wp.array(cdf,dtype=float,device=alias),
         tuple(up), float(heights.min()), float(np.ptp(heights)), config, alias,
         vertices.copy(),triangles.copy(),islands.astype(np.int32),
-        wp.array(mappings,dtype=int,device=alias),wp.array(offsets,dtype=int,device=alias))
+        wp.array(mappings,dtype=int,device=alias),wp.array(offsets,dtype=int,device=alias),
+        np.flatnonzero(keep).astype(np.int32))
 
 
 def sample_source(source, seed, frame, candidate_ids, max_attempts=16, output=None, count=None):

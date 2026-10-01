@@ -177,5 +177,5 @@ particle solver still misses the interactive budget.
 
 The detailed implementation plan is
 `docs/superpowers/plans/2026-10-01-million-particle-preview.md`.
-The design is approved; the plan awaits review before implementation.
+The design and plan are approved; implementation is in progress.
 Continue the already selected Native execution method.

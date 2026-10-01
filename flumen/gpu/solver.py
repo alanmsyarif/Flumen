@@ -8,7 +8,7 @@ from .motion import advance, advance_coupled
 
 
 class FlowSolver:
-    def __init__(self, config, source, device, start_frame=1, fps=30, fps_base=1.0):
+    def __init__(self, config, source, device, start_frame=1, fps=30, fps_base=1.0, *, prepared=None):
         config.validate()
         if not isinstance(start_frame,int):
             raise ValueError('Simulation start must be an integer frame')
@@ -18,9 +18,14 @@ class FlowSolver:
         self.start_frame = start_frame
         self.dt = frame_dt(fps,fps_base)*config.time_scale
         self.pool = ParticlePool(config,device)
+        self.prepared = None
         self.topology=self.interaction=self.surface=self.geometry_buffers=self.free_buffers=None
         self._water_cache=None
         try:
+            if prepared is not None:
+                if prepared.source is not source:
+                    raise ValueError('Prepared contacts belong to a different source')
+                self.prepared = prepared.retain()
             if config.interactions_enabled or config.display_mode=='CONNECTED':
                 from .topology import build_topology
                 self.topology=build_topology(source,config.radius*config.interaction_radius_scale,
@@ -42,6 +47,7 @@ class FlowSolver:
             if self.geometry_buffers is not None: self.geometry_buffers.close()
             if self.free_buffers is not None: self.free_buffers.close()
             if self.topology is not None: self.topology.close()
+            if self.prepared is not None: self.prepared.release()
             raise
         self.current_frame = None
         self.stats = None
@@ -109,7 +115,11 @@ class FlowSolver:
         if self.pool is not None:
             self.pool.close()
         if self.source is not None:
-            self.source.close()
+            if self.prepared is not None:
+                self.prepared.release()
+                self.prepared = None
+            else:
+                self.source.close()
         if self.interaction is not None: self.interaction.close()
         if self.surface is not None: self.surface.close()
         if self.geometry_buffers is not None: self.geometry_buffers.close()

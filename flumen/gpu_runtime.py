@@ -280,6 +280,8 @@ def extract_source(obj, depsgraph) -> tuple:
         faces = np.empty(len(mesh.loop_triangles)*3,dtype=np.int32)
         mesh.loop_triangles.foreach_get('vertices',faces)
         faces = faces.reshape(-1,3)
+        if np.linalg.det(matrix[:3,:3]) < 0:
+            faces = faces[:,[0,2,1]].copy()
         parents = list(range(len(vertices)))
         def root(a):
             while parents[a] != a:

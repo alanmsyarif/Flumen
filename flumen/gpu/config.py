@@ -44,12 +44,22 @@ class FlowConfig:
     reconstruction_scale: float = 1.0
     wetness_deposit_rate: float = 5.0
     wetness_drying_rate: float = .1
+    solver_backend: str = 'LEGACY'
+    field_spacing: float = .001
+    contact_spacing: float = .002
+    field_viscosity: float = 1.e-6
+    surface_tension: float = .072
+    resample_target: int = 0
 
     def validate(self) -> None:
         if self.mode not in ('BURST', 'CONTINUOUS'):
             raise ValueError('Emission mode must be BURST or CONTINUOUS')
-        if self.display_mode not in ('DROPS','CONNECTED'):
-            raise ValueError('Display mode must be DROPS or CONNECTED')
+        if self.display_mode not in ('DROPS','CONNECTED','POINTS'):
+            raise ValueError('Unknown particle display mode')
+        if self.solver_backend not in ('LEGACY','FIELD'):
+            raise ValueError('Unknown solver backend')
+        if self.solver_backend == 'FIELD' and self.display_mode != 'POINTS':
+            raise ValueError('FIELD requires the POINTS preview; mesh cached frames offline')
         if not isinstance(self.interactions_enabled,bool):
             raise ValueError('interactions_enabled must be a Boolean')
         for name, low, high in (
@@ -58,6 +68,7 @@ class FlowConfig:
             ('emission_start', -1_000_000, 1_000_000),
             ('emission_end', -1_000_000, 1_000_000), ('minimum_substeps', 1, 64),
             ('initial_coating_count', 0, 2**31-1),
+            ('resample_target', 0, self.capacity),
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -76,6 +87,8 @@ class FlowConfig:
             ('surface_damping',0.,1000.), ('merge_distance_scale',0.,1.),
             ('maximum_merged_radius_scale',1.,8.), ('reconstruction_scale',.5,4.),
             ('wetness_deposit_rate',0.,1000.), ('wetness_drying_rate',0.,1000.),
+            ('field_spacing',.00005,.02), ('contact_spacing',.00005,.05),
+            ('field_viscosity',0.,.01), ('surface_tension',0.,1.),
         ):
             value = getattr(self, name)
             if not isfinite(value) or not low <= value <= high:
