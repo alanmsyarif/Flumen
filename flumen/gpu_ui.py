@@ -22,12 +22,23 @@ class SF_PT_gpu(bpy.types.Panel):
             box=layout.box(); box.alert=True
             box.label(text=error,icon='ERROR')
         layout.label(text=host.get('sf_gpu_device','CUDA not initialized'))
+        geometry_error=host.get('sf_gpu_geometry_error','')
+        if geometry_error:
+            box=layout.box(); box.alert=True
+            box.label(text=geometry_error,icon='ERROR')
+        layout.prop(settings,'display_mode')
+        layout.prop(settings,'interactions_enabled')
         for name in ('mode','particles_per_frame' if settings.mode=='CONTINUOUS' else 'burst_count',
-                     'emission_start','emission_end','capacity','lifetime','seed','radius',
+                     'emission_start','emission_end','initial_coating_count','time_scale','capacity','lifetime','seed','radius',
                      'source_start','source_softness','gravity','resistance','adhesion',
                      'capture_distance','capture_speed','minimum_substeps','max_travel',
                      'normal_turn_limit','kill_height','material'):
             layout.prop(settings,name)
+        if settings.display_mode=='CONNECTED' or settings.interactions_enabled:
+            for name in ('interaction_radius_scale','cohesion_acceleration','repulsion_acceleration',
+                         'surface_damping','merge_distance_scale','maximum_merged_radius_scale',
+                         'reconstruction_scale','wetness_deposit_rate','wetness_drying_rate'):
+                layout.prop(settings,name)
         from .gpu_runtime import RUNTIMES
         record=RUNTIMES.get(host.as_pointer())
         if record and record.solver.stats:
@@ -36,3 +47,8 @@ class SF_PT_gpu(bpy.types.Panel):
             layout.label(text=f'{s.capacity_rejected:,} capacity / {s.source_rejected:,} source rejected')
             layout.label(text=f'{s.solver_ms:.2f} ms solver • {s.transfer_ms:.2f} ms transfer')
             layout.label(text=f'{s.substeps} substeps • {s.limited_count} limited')
+            if settings.display_mode=='CONNECTED':
+                layout.label(text=f'{s.water_vertices:,} water vertices / {s.water_triangles:,} triangles')
+                layout.label(text=f'{s.reconstruction_ms:.2f} ms reconstruction')
+                layout.label(text=f'{s.coarsening_factor:.1f}x resolution / {s.neighbor_overflow:,} neighbor overflow')
+                layout.label(text=f'{s.unrepresented_volume:.3g} m³ unsupported / {s.rendered_volume_error:.1%} mesh volume error')

@@ -52,10 +52,11 @@ class ConnectedWaterTests(unittest.TestCase):
         self.assertIsNot(host.data,duplicate.data)
         self.assertIsNot(self.wet(host),self.wet(duplicate))
         self.assertIsNot(first.surface.wetness,second.surface.wetness)
-        old_wet=self.wet(host).as_pointer()
+        old_wet=self.wet(host)
         runtime.reset_host(host)
         self.assertIsNone(first.pool)
-        self.assertNotIn(old_wet,{o.as_pointer() for o in bpy.data.objects})
+        # Blender's allocator can reuse a deleted object's address immediately.
+        with self.assertRaises(ReferenceError): _=old_wet.name
         bpy.data.objects.remove(duplicate,do_unlink=True); runtime.purge_deleted()
         self.assertIsNone(second.pool)
         self.assertEqual(len([o for o in bpy.data.objects if o.get('sf_gpu_wet_owned')]),1)
@@ -103,3 +104,19 @@ class ConnectedWaterTests(unittest.TestCase):
         runtime.evaluate_host(host,self.scene)
         self.assertIn('budget',host['sf_gpu_geometry_error'].lower())
         self.assertGreaterEqual(host['sf_gpu_coarsening'],1.)
+
+    def test_save_reload_reconstructs_only_owned_output(self):
+        import tempfile
+        from pathlib import Path
+        host=self.make(); name=host.name; source_name=self.source.name
+        old=runtime.get_runtime(host,self.scene)
+        with tempfile.TemporaryDirectory() as directory:
+            path=str(Path(directory)/'connected-roundtrip.blend')
+            bpy.ops.wm.save_as_mainfile(filepath=path)
+            bpy.ops.wm.open_mainfile(filepath=path)
+            self.assertIsNone(old.pool)
+            host=bpy.data.objects[name]
+            runtime.evaluate_host(host,bpy.context.scene)
+            self.assertGreater(len(host.data.polygons),0)
+            self.assertEqual(len([o for o in bpy.data.objects if o.get('sf_gpu_wet_owned')]),1)
+            self.assertIs(host.flumen_gpu.source,bpy.data.objects[source_name])

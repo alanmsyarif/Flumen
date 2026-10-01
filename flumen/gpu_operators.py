@@ -4,7 +4,7 @@ import bpy
 class SF_OT_create_gpu_flow(bpy.types.Operator):
     bl_idname='flumen.create_gpu_flow'
     bl_label='Create GPU Flow'
-    bl_description='Create live CUDA surface particles with continuous frame emission'
+    bl_description='Create live connected CUDA water with continuous frame emission'
     bl_options={'REGISTER','UNDO'}
 
     @classmethod
@@ -15,7 +15,7 @@ class SF_OT_create_gpu_flow(bpy.types.Operator):
     def execute(self,context):
         from .gpu_runtime import create_gpu_host
         try:
-            host=create_gpu_host(context.active_object,context.scene)
+            host=create_gpu_host(context.active_object,context.scene,display_mode='CONNECTED')
         except (ValueError,RuntimeError,ImportError,OSError) as exc:
             self.report({'ERROR'},str(exc)); return {'CANCELLED'}
         for obj in context.selected_objects: obj.select_set(False)
