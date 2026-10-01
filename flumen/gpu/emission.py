@@ -65,7 +65,12 @@ def retirement(d: ParticleArrays, lifetime: float, kill_height: float, ledger: w
 
 
 def emit(pool, source, config, frame) -> None:
-    requested = requested_births(config,frame)
+    emit_batch(pool,source,config,frame,requested_births(config,frame))
+
+
+def emit_batch(pool, source, config, frame, requested: int) -> None:
+    if isinstance(requested,bool) or not isinstance(requested,int) or not 0 <= requested <= 2**31-1:
+        raise ValueError('Requested births must be a nonnegative int32 count')
     if requested == 0:
         return
     if pool.next_id > 2**63-1-pool.capacity:

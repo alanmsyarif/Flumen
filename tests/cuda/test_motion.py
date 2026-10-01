@@ -39,6 +39,28 @@ class MotionTests(unittest.TestCase):
         self.advance(self.pool,self.source,cfg,0)
         np.testing.assert_array_equal(self.pool.data.position.numpy(),before)
 
+    def test_anchor_projection_matches_bvh_across_edges_and_detachment(self):
+        from flumen.gpu.solver import FlowSolver
+        cfg=replace(self.cfg,capacity=128,initial_coating_count=128,particles_per_frame=0,
+                    source_start=0,source_softness=0,minimum_substeps=1,max_travel=.002)
+        vertices=[[0,0,0],[.03,0,0],[0,0,.03],[.03,0,.03],
+                  [.03,.01,.05],[0,.01,.05]]
+        triangles=[[0,1,2],[1,3,2],[2,3,4],[2,4,5]]
+        solvers=[]
+        for _ in range(2):
+            source=build_source(vertices,triangles,[0]*4,cfg,self.device)
+            solver=FlowSolver(cfg,source,self.device)
+            self.addCleanup(solver.close); solver.seek(1); solvers.append(solver)
+        fast,reference=solvers
+        for _ in range(30):
+            self.advance(fast.pool,fast.source,cfg,1/30,use_anchor_projection=True)
+            self.advance(reference.pool,reference.source,cfg,1/30,use_anchor_projection=False)
+            np.testing.assert_allclose(fast.pool.data.position.numpy(),reference.pool.data.position.numpy(),atol=1e-6)
+            np.testing.assert_allclose(fast.pool.data.velocity.numpy(),reference.pool.data.velocity.numpy(),atol=1e-6)
+            np.testing.assert_array_equal(fast.pool.data.state.numpy(),reference.pool.data.state.numpy())
+        self.assertTrue((fast.pool.data.state.numpy()==1).any(),'Fixture must exercise detachment')
+        np.testing.assert_array_equal(fast.pool.data.age.numpy(),reference.pool.data.age.numpy())
+
     def test_thin_wall_capture_and_fast_contact(self):
         for speed,captured in [(.2,True),(2.,False)]:
             self.pool.data.position.assign([[0,-.001,1]])

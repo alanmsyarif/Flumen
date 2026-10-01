@@ -50,6 +50,8 @@ def purge_deleted():
     for key in list(RUNTIMES):
         if key not in alive:
             RUNTIMES.pop(key).solver.close()
+    from .gpu_water_display import purge_orphan_water_displays
+    purge_orphan_water_displays()
 
 
 def get_runtime(host,scene):
@@ -77,10 +79,22 @@ def get_runtime(host,scene):
         host['sf_gpu_uid']=str(uuid4())
         host['sf_gpu_device']=device.name
         host['sf_gpu_error']=''
-        RUNTIMES[key]=HostRuntime(host,solver,signature,_fingerprint(arrays))
+        if signature[0].display_mode=='CONNECTED':
+            from .gpu_water_display import create_water_display
+            create_water_display(host,solver.topology)
+        else:
+            from .gpu_water_display import release_water_display
+            release_water_display(host)
+            host['sf_gpu_water_display']=False
+            host['sf_gpu_geometry_error']=''
+            if not any(m.type=='NODES' and m.node_group and m.node_group.get('sf_gpu_display') for m in host.modifiers):
+                create_display(host)
         set_material(host,host.flumen_gpu.material)
+        RUNTIMES[key]=HostRuntime(host,solver,signature,_fingerprint(arrays))
         return solver
     except Exception:
+        from .gpu_water_display import release_water_display
+        release_water_display(host)
         if solver is not None: solver.close()
         else: source.close()
         raise
@@ -101,7 +115,15 @@ def evaluate_host(host,scene,frame=None):
     try:
         solver=get_runtime(host,scene)
         stats=solver.seek(frame)
-        update_display(host,solver.snapshot())
+        if solver.config.display_mode=='CONNECTED':
+            from .gpu_water_display import update_water_display
+            from time import perf_counter
+            geometry=solver.water_snapshot(); fields=solver.surface_snapshot()
+            start=perf_counter()
+            update_water_display(host,geometry,fields)
+            stats.display_update_ms=(perf_counter()-start)*1000
+        else:
+            update_display(host,solver.snapshot())
         return stats
     finally:
         _BUSY=False
@@ -112,14 +134,18 @@ def reset_host(host):
         raise ValueError('Select a GPU Flow host')
     record=RUNTIMES.pop(host.as_pointer(),None)
     if record: record.solver.close()
+    from .gpu_water_display import release_water_display
+    release_water_display(host)
     host['sf_gpu_error']=''
     return evaluate_host(host,bpy.context.scene)
 
 
-def create_gpu_host(source,scene):
+def create_gpu_host(source,scene,display_mode='DROPS'):
     global _BUSY
     if source is None or source.type!='MESH' or source.get('sf_gpu_host') or source.get('sf_simulation_host'):
         raise ValueError('Select a stationary collision mesh')
+    if display_mode not in ('DROPS','CONNECTED'):
+        raise ValueError('Unknown water display mode')
     from .gpu.device import require_cuda
     require_cuda()
     mesh=bpy.data.meshes.new('GPU Flow Points')
@@ -131,9 +157,10 @@ def create_gpu_host(source,scene):
     _BUSY=True
     try:
         host.flumen_gpu.source=source
+        host.flumen_gpu.display_mode=display_mode
+        host.flumen_gpu.interactions_enabled=display_mode=='CONNECTED'
         host.flumen_gpu.emission_start=scene.frame_start
         host.flumen_gpu.emission_end=scene.frame_end
-        create_display(host)
     finally:
         _BUSY=False
     try:
@@ -142,17 +169,27 @@ def create_gpu_host(source,scene):
     except Exception:
         record=RUNTIMES.pop(host.as_pointer(),None)
         if record: record.solver.close()
+        from .gpu_water_display import release_water_display
+        release_water_display(host)
+        material=host.flumen_gpu.material
         trees=[m.node_group for m in host.modifiers if m.type=='NODES']
         bpy.data.objects.remove(host,do_unlink=True)
         if mesh.users==0: bpy.data.meshes.remove(mesh)
         for tree in trees:
             if tree and tree.users==0: bpy.data.node_groups.remove(tree)
+        if material and material.users==0 and material.get('sf_gpu_water_material'):
+            bpy.data.materials.remove(material)
         raise
 
 
 def release_all():
-    for record in list(RUNTIMES.values()): record.solver.close()
+    from .gpu_water_display import release_water_display,purge_orphan_water_displays
+    for record in list(RUNTIMES.values()):
+        record.solver.close()
+        try: release_water_display(record.host)
+        except ReferenceError: pass
     RUNTIMES.clear()
+    purge_orphan_water_displays()
 
 
 @persistent
@@ -243,6 +280,8 @@ def extract_source(obj, depsgraph) -> tuple:
         faces = np.empty(len(mesh.loop_triangles)*3,dtype=np.int32)
         mesh.loop_triangles.foreach_get('vertices',faces)
         faces = faces.reshape(-1,3)
+        if np.linalg.det(matrix[:3,:3]) < 0:
+            faces = faces[:,[0,2,1]].copy()
         parents = list(range(len(vertices)))
         def root(a):
             while parents[a] != a:

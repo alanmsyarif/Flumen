@@ -69,11 +69,29 @@ class SourceMesh:
     span: float
     config: object
     device: str
+    vertices_cpu: object
+    triangles_cpu: object
+    islands_cpu: object
+    local_to_global: object
+    island_offsets: object
+    evaluated_triangle_ids: object
+
+    def refresh_sampling(self, config):
+        """Refresh physical source controls while retaining collision arrays/BVHs."""
+        config.validate()
+        up = -np.asarray(config.gravity, dtype=np.float64)
+        up /= np.linalg.norm(up)
+        heights = self.vertices_cpu @ up
+        self.up, self.low, self.span = tuple(up), float(heights.min()), float(np.ptp(heights))
+        self.config = config
 
     def close(self):
         self.mesh = None
         self.island_meshes.clear()
         self.island_handles = self.islands = self.cdf = None
+        self.vertices_cpu = self.triangles_cpu = self.islands_cpu = None
+        self.local_to_global = self.island_offsets = None
+        self.evaluated_triangle_ids = None
 
 
 def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
@@ -96,7 +114,10 @@ def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
     points = wp.array(vertices, dtype=wp.vec3, device=alias)
     mesh = wp.Mesh(points=points, indices=wp.array(triangles.flatten(),dtype=int,device=alias))
     island_meshes = []
+    mappings=[]; offsets=[]
     for index in range(int(islands.max())+1):
+        offsets.append(len(mappings))
+        mappings.extend(np.flatnonzero(islands==index).tolist())
         subset = triangles[islands == index]
         island_meshes.append(mesh if len(subset)==len(triangles) else wp.Mesh(
             points=points, indices=wp.array(subset.flatten(),dtype=int,device=alias)))
@@ -107,7 +128,10 @@ def build_source(vertices, triangles, island_ids, config, device) -> SourceMesh:
     return SourceMesh(mesh, island_meshes,
         wp.array([m.id for m in island_meshes],dtype=wp.uint64,device=alias),
         wp.array(islands,dtype=int,device=alias), wp.array(cdf,dtype=float,device=alias),
-        tuple(up), float(heights.min()), float(np.ptp(heights)), config, alias)
+        tuple(up), float(heights.min()), float(np.ptp(heights)), config, alias,
+        vertices.copy(),triangles.copy(),islands.astype(np.int32),
+        wp.array(mappings,dtype=int,device=alias),wp.array(offsets,dtype=int,device=alias),
+        np.flatnonzero(keep).astype(np.int32))
 
 
 def sample_source(source, seed, frame, candidate_ids, max_attempts=16, output=None, count=None):

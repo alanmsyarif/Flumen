@@ -27,6 +27,11 @@ def create_display(host):
 
 
 def set_material(host, material):
+    if host.flumen_gpu.display_mode=='CONNECTED':
+        if host.data.users>1: host.data=host.data.copy()
+        host.data.materials.clear()
+        if material is not None: host.data.materials.append(material)
+        return
     for modifier in host.modifiers:
         if modifier.type=='NODES' and modifier.node_group and modifier.node_group.get('sf_gpu_display'):
             if modifier.node_group.users>1:

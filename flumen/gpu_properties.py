@@ -27,11 +27,24 @@ _bounds = {
     'kill_height':(-10000,10000),'source_start':(0,1),'source_softness':(0,.5),
     'resistance':(0,1000),'adhesion':(0,1000),'capture_distance':(.00001,.1),
     'capture_speed':(0,100),'max_travel':(.00001,.1),'normal_turn_limit':(1,89),
+    'time_scale':(.01,2),'initial_coating_count':(0,2**31-1),
+    'interaction_radius_scale':(1,16),'cohesion_acceleration':(0,100),
+    'repulsion_acceleration':(0,100),'surface_damping':(0,1000),
+    'merge_distance_scale':(0,1),'maximum_merged_radius_scale':(1,8),
+    'reconstruction_scale':(.5,4),'wetness_deposit_rate':(0,1000),'wetness_drying_rate':(0,1000),
+    'field_spacing':(.00005,.02),'contact_spacing':(.00005,.05),
+    'field_viscosity':(0,.01),'surface_tension':(0,1),'resample_target':(0,1000000),
 }
 for field in fields(FlowConfig):
     opts={'name':field.name.replace('_',' ').title(),'default':field.default,'update':changed}
     if field.name == 'mode':
         prop=bpy.props.EnumProperty(items=[('BURST','Burst','Emit once'),('CONTINUOUS','Continuous','Emit every eligible frame')],**opts)
+    elif field.name == 'display_mode':
+        prop=bpy.props.EnumProperty(items=[('DROPS','Drops','Diagnostic particle display'),('CONNECTED','Connected Water','Reconstructed liquid surface'),('POINTS','Points','GPU particle preview')],**opts)
+    elif field.name == 'solver_backend':
+        prop=bpy.props.EnumProperty(items=[('LEGACY','Legacy','Independent or pairwise particle solver'),('FIELD','Surface Field','Bounded surface-field interactions')],**opts)
+    elif isinstance(field.default,bool):
+        prop=bpy.props.BoolProperty(**opts)
     elif field.name == 'gravity':
         prop=bpy.props.FloatVectorProperty(size=3,**opts)
     else:
