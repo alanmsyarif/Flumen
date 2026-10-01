@@ -28,6 +28,8 @@ class ConnectedWaterTests(unittest.TestCase):
         self.assertEqual(legacy.flumen_gpu.display_mode,'DROPS')
         self.assertFalse(legacy.flumen_gpu.interactions_enabled)
         host=self.make(); solver=runtime.get_runtime(host,self.scene)
+        self.assertGreater(solver.stats.transfer_ms,0.)
+        self.assertGreater(solver.stats.display_update_ms,0.)
         self.assertTrue(host.flumen_gpu.interactions_enabled)
         self.assertGreater(len(host.data.polygons),0)
         self.assertEqual(len(host.modifiers),0)

@@ -117,7 +117,11 @@ def evaluate_host(host,scene,frame=None):
         stats=solver.seek(frame)
         if solver.config.display_mode=='CONNECTED':
             from .gpu_water_display import update_water_display
-            update_water_display(host,solver.water_snapshot(),solver.surface_snapshot())
+            from time import perf_counter
+            geometry=solver.water_snapshot(); fields=solver.surface_snapshot()
+            start=perf_counter()
+            update_water_display(host,geometry,fields)
+            stats.display_update_ms=(perf_counter()-start)*1000
         else:
             update_display(host,solver.snapshot())
         return stats

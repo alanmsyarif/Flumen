@@ -12,9 +12,10 @@ def _write_mesh(mesh,vertices,triangles,normals=None):
         mesh.vertices.foreach_set('co',np.asarray(vertices,np.float32).reshape(-1))
     if t:
         mesh.loops.add(3*t); mesh.polygons.add(t)
-        mesh.loops.foreach_set('vertex_index',np.asarray(triangles,np.int32).reshape(-1))
-        mesh.polygons.foreach_set('loop_start',np.arange(t,dtype=np.int32)*3)
-        mesh.polygons.foreach_set('loop_total',np.full(t,3,np.int32))
+        # Match RNA's UNSIGNED subtype so foreach_set uses the buffer directly.
+        mesh.loops.foreach_set('vertex_index',np.asarray(triangles,np.uint32).reshape(-1))
+        mesh.polygons.foreach_set('loop_start',np.arange(t,dtype=np.uint32)*3)
+        mesh.polygons.foreach_set('loop_total',np.full(t,3,np.uint32))
         mesh.polygons.foreach_set('use_smooth',np.ones(t,bool))
     mesh.update()
     # Shared vertices let Blender compute smooth normals from the live shape.

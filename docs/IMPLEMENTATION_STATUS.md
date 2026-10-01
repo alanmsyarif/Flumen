@@ -1,4 +1,24 @@
-# Implementation status - GPU 0.0.3 and legacy M0-M1
+# Implementation status — connected development and legacy releases
+
+## Connected development checkpoint, 2026-10-01
+
+The development branch now has GPU surface interactions, conservative merging,
+initial coating/time controls, attached/free mesh reconstruction and persistent
+wetness. Both 180-frame clips and comparison stills exist, but the visual
+reference gate still fails: coating/channels are too coarse and patchy.
+
+The user now permits offline final meshing and requires interactive particle
+simulation at one million particles. Current solver-only probes are below that
+target: 22–25 FPS for independent particles and much slower dense interactions.
+Meshing is not responsible for those solver-only costs. The revised
+[design for review](superpowers/specs/2026-10-01-million-particle-preview-design.md)
+proposes GPU surface fields, point drawing and deferred meshing; it is not yet
+implemented. No particle bake, version 0.0.4 package or release is delivered.
+
+Verified source: 66 Python, 54 CUDA and 59 Blender tests. Raw results,
+reproduction and limitations are in
+[Connected validation](CONNECTED_WATER_VALIDATION.md). The earlier 0.0.3
+measurements below are historical Drops evidence, not proof for this increment.
 
 ## GPU Flow, 2026-09-30
 

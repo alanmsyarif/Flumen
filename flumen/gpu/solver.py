@@ -77,6 +77,8 @@ class FlowSolver:
         self.current_frame = frame
         self._water_cache=None
         self.stats = read_stats(self.pool,frame)
+        if self.interaction is not None:
+            self.stats.interaction_ms=self.interaction.timing_ms()
         if self.surface is not None:
             summary=self.surface.summary.numpy()
             self.stats.proxy_vertices=len(self.topology.vertices)
@@ -99,6 +101,7 @@ class FlowSolver:
             self.pool.close()
         self.pool = ParticlePool(self.config,self.device)
         if self.surface is not None: self.surface.reset()
+        if self.interaction is not None: self.interaction.timing_count=0
         self.current_frame = self.stats = None
         self._water_cache=None
 
@@ -119,7 +122,11 @@ class FlowSolver:
     def surface_snapshot(self):
         if self.surface is None: return None
         from .surface import snapshot_surface
-        return snapshot_surface(self.surface)
+        start=perf_counter()
+        result=snapshot_surface(self.surface)
+        if self.stats is not None:
+            self.stats.transfer_ms=self.geometry_buffers.transfer_ms+(perf_counter()-start)*1000
+        return result
 
     def water_snapshot(self):
         if self.surface is None: return None
@@ -128,6 +135,7 @@ class FlowSolver:
             from .surface_mesh import build_attached_mesh
             from .free_mesh import build_free_mesh
             start=perf_counter()
+            self.geometry_buffers.transfer_ms=0.
             attached=build_attached_mesh(self.topology,self.surface,self.config,self.geometry_buffers)
             free=build_free_mesh(self.pool,self.source,self.config,
                 self.geometry_buffers.vertex_budget-len(attached.vertices),

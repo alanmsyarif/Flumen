@@ -1,13 +1,18 @@
 """Deterministic capped CUDA neighborhoods with surface-locality checks."""
 import warp as wp
+from math import ceil,log2
 from .state import ParticleArrays
 from .topology import compatible_faces
 
 
 class NeighborBuffers:
-    def __init__(self,capacity,device):
+    def __init__(self,capacity,device,*,grid_resolution=None):
         self.device=device
-        self.grid=wp.HashGrid(64,64,64,device=device)
+        if grid_resolution is None:
+            grid_resolution=max(64,min(256,2**ceil(log2((capacity*4)**(1/3)))))
+        if grid_resolution not in (64,128,256): raise ValueError('Grid resolution must be 64, 128 or 256')
+        self.grid_resolution=grid_resolution
+        self.grid=wp.HashGrid(grid_resolution,grid_resolution,grid_resolution,device=device)
         self.indices=wp.full((capacity,64),-1,dtype=int,device=device)
         self.distances=wp.zeros((capacity,64),dtype=float,device=device)
         self.counts=wp.zeros(capacity,dtype=int,device=device)
@@ -38,17 +43,20 @@ def neighbors_kernel(d:ParticleArrays,grid:wp.uint64,mesh:wp.uint64,
                 hit=wp.mesh_query_ray(mesh,d.position[i],delta/distance,wp.max(0.,distance-1.e-6))
                 if hit.result: continue
             eligible+=1
+            if count==64:
+                last=indices[i,63]
+                if distance>distances[i,63] or (distance==distances[i,63] and d.ids[j]>=d.ids[last]): continue
             insert=count
-            for k in range(64):
-                if k<count:
-                    other=indices[i,k]
-                    if insert==count and (distance<distances[i,k] or (distance==distances[i,k] and d.ids[j]<d.ids[other])):
-                        insert=k
+            for k in range(count):
+                other=indices[i,k]
+                if distance<distances[i,k] or (distance==distances[i,k] and d.ids[j]<d.ids[other]):
+                    insert=k
+                    break
             if insert<64:
-                for reverse in range(63):
-                    k=63-reverse
-                    if k>insert and k<=count:
-                        indices[i,k]=indices[i,k-1]; distances[i,k]=distances[i,k-1]
+                end=wp.min(count,63)
+                for reverse in range(end-insert):
+                    k=end-reverse
+                    indices[i,k]=indices[i,k-1]; distances[i,k]=distances[i,k-1]
                 indices[i,insert]=j; distances[i,insert]=distance
                 count=wp.min(64,count+1)
     counts[i]=count

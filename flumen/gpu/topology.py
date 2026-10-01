@@ -122,4 +122,5 @@ def compatible_faces(support:wp.array(dtype=int,ndim=2),a:int,b:int):
         for k in range(64):
             if support[a,k]==b: forward=True
             if support[b,k]==a: backward=True
+            if forward and backward: return True
     return forward and backward

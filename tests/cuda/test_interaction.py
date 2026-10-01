@@ -51,6 +51,20 @@ class InteractionTests(unittest.TestCase):
         self.compute(f)
         np.testing.assert_array_equal(f[1].data.ids.numpy()[f[4].indices.numpy()[70,:64]],ids)
 
+    def test_grid_scaling_preserves_neighbors_and_overflow(self):
+        from flumen.gpu.neighbors import NeighborBuffers,build_neighbors
+        positions=[[.00001*i,0,0] for i in range(71)]
+        positions += [[offset+.00001*i,0,0] for offset in (-.256,.256) for i in range(20)]
+        fixture=self.make(positions)
+        source,pool,cfg,topology,_,_=fixture
+        outputs=[]
+        for resolution in (64,256):
+            neighbors=NeighborBuffers(pool.capacity,pool.device,grid_resolution=resolution)
+            self.addCleanup(neighbors.close)
+            build_neighbors(pool,source,topology,cfg,neighbors)
+            outputs.append((neighbors.indices.numpy(),neighbors.counts.numpy(),neighbors.overflow.numpy()))
+        for small,large in zip(*outputs): np.testing.assert_array_equal(small,large)
+
     def test_damping_and_zero_strengths(self):
         f=self.make([[0,0,0],[.002,0,0]],cohesion_acceleration=0,repulsion_acceleration=0)
         f[1].data.velocity.assign([[1,0,0],[-1,0,0]])

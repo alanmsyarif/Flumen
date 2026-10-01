@@ -2,6 +2,15 @@
 
 Experimental **Blender 5.2 LTS** surface flow and drips, version 0.0.3.
 
+The development branch includes experimental connected water, coating, merging
+and wetness. Its visual reference match and million-particle interactive target
+are **not achieved**. The revised target is real-time particles while editing,
+with final meshing deferred to a later bake. See the
+[measured checkpoint](docs/CONNECTED_WATER_VALIDATION.md) and
+[revised design for review](docs/superpowers/specs/2026-10-01-million-particle-preview-design.md).
+The packaged 0.0.3 workflow and measurements below describe the earlier Drops
+foundation; the development increment is not a new release.
+
 ## GPU Flow: continuous emission
 
 Install the Windows GPU extension built with the bundled Warp 1.17.0 wheel.

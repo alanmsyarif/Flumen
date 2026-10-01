@@ -74,6 +74,7 @@ class FrameStats:
     transfer_ms: float = 0.0
     interaction_ms: float = 0.0
     reconstruction_ms: float = 0.0
+    display_update_ms: float = 0.0
     neighbor_overflow: int = 0
     merged_pairs: int = 0
     proxy_vertices: int = 0

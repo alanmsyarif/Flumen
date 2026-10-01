@@ -10,7 +10,7 @@ def propose(d:ParticleArrays,indices:wp.array(dtype=int,ndim=2),counts:wp.array(
     i=wp.tid(); choice=int(-1); best=float(1.e20)
     if d.active[i]==1:
         radius=wp.pow(d.volume[i]*0.238732414637843,1./3.)
-        for k in range(64):
+        for k in range(counts[i]):
             if k<counts[i]:
                 j=indices[i,k]
                 if d.active[j]==0 or d.state[i]!=d.state[j]: continue

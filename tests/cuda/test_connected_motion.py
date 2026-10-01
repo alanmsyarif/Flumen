@@ -41,6 +41,21 @@ class ConnectedMotionTests(unittest.TestCase):
         np.testing.assert_allclose(a.snapshot().positions,b.snapshot().positions,atol=1e-6)
         self.assertAlmostEqual(a.stats.emitted_volume,a.stats.live_volume+a.stats.removed_volume,delta=a.stats.emitted_volume*1e-5)
 
+    def test_gpu_interaction_timing_preserves_state(self):
+        measured=self.make(); plain=self.make()
+        measured.interaction.enable_timing()
+        measured.seek(3); plain.seek(3)
+        self.assertGreater(measured.stats.interaction_ms,0.)
+        self.assertLessEqual(measured.interaction.timing_count,128)
+        np.testing.assert_array_equal(measured.snapshot().positions,plain.snapshot().positions)
+        self.assertEqual(measured.stats.accepted,plain.stats.accepted)
+        self.assertEqual(measured.stats.emitted_volume,plain.stats.emitted_volume)
+        elapsed=measured.stats.interaction_ms
+        measured.seek(3)
+        self.assertEqual(measured.stats.interaction_ms,elapsed)
+        measured.reset(); measured.seek(1)
+        self.assertEqual(measured.stats.interaction_ms,0.)
+
     def test_shared_overflow_and_slot_reuse(self):
         solver=self.make(); solver.seek(1)
         solver.pool.data.velocity.assign([[100,0,0]]*32)

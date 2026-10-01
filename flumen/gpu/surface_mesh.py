@@ -26,6 +26,7 @@ class GeometryBuffers:
         self.host_normals=wp.zeros(vertex_budget,dtype=wp.vec3,device='cpu',pinned=True)
         self.host_triangles=wp.zeros(triangle_budget,dtype=wp.vec3i,device='cpu',pinned=True)
         self.boundary=None; self.topology=None
+        self.transfer_ms=0.
         self.edge_vertices=self.face_edges=self.vertex_mask=self.vertex_prefix=self.vertex_total=None
 
     def prepare(self,topology):
@@ -49,13 +50,18 @@ class GeometryBuffers:
 
     def read(self,count,vertex_count=None,**diagnostics):
         if not count: return MeshBatch.empty(**diagnostics)
+        from time import perf_counter
+        wp.synchronize_device(self.device)
+        start=perf_counter()
         n=count*3 if vertex_count is None else vertex_count
         wp.copy(self.host_vertices,self.vertices,count=n)
         wp.copy(self.host_normals,self.normals,count=n)
         wp.copy(self.host_triangles,self.triangles,count=count)
         wp.synchronize_device(self.device)
-        return MeshBatch(self.host_vertices.numpy()[:n].copy(),self.host_normals.numpy()[:n].copy(),
+        result=MeshBatch(self.host_vertices.numpy()[:n].copy(),self.host_normals.numpy()[:n].copy(),
                          self.host_triangles.numpy()[:count].copy(),diagnostics)
+        self.transfer_ms+=(perf_counter()-start)*1000
+        return result
 
 
 @wp.kernel
