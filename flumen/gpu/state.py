@@ -83,6 +83,20 @@ class FrameStats:
     coarsening_factor: float = 1.0
     unrepresented_volume: float = 0.0
     rendered_volume_error: float = 0.0
+    backend: str = 'LEGACY'
+    field_ms: float = 0.
+    contact_ms: float = 0.
+    aggregation_ms: float = 0.
+    readback_ms: float = 0.
+    upload_ms: float = 0.
+    draw_ms: float = 0.
+    displayed_count: int = 0
+    contact_fallback_count: int = 0
+    contact_unresolved_count: int = 0
+    resampled_count: int = 0
+    owned_array_bytes: int = 0
+    field_nodes: int = 0
+    contact_samples: int = 0
 
 
 class ParticlePool:
@@ -105,6 +119,7 @@ class ParticlePool:
         self.merge_count=wp.zeros(1,dtype=int,device=self.device)
         self.neighbor_overflow_count=wp.zeros(1,dtype=int,device=self.device)
         self.summary = wp.zeros(3,dtype=wp.float64,device=self.device)
+        self.summary_blocks = wp.zeros(((self.capacity+255)//256,3),dtype=wp.float64,device=self.device)
         self.read_count = wp.zeros(1,dtype=int,device=self.device)
         self.display = wp.zeros(self.capacity,dtype=wp.vec4,device=self.device)
         self.display_ids = wp.zeros(self.capacity,dtype=wp.int64,device=self.device)
@@ -125,17 +140,26 @@ class ParticlePool:
         self.counters = self.ledger = self.step_count = None
         self.merge_partners=self.merge_count=self.neighbor_overflow_count=None
         self.summary = self.read_count = self.display = self.display_ids = None
+        self.summary_blocks = None
         self.host_display = self.host_ids = None
         self.display_aux.clear(); self.host_aux.clear()
 
 
 @wp.kernel
-def summarize_kernel(d: ParticleArrays, summary: wp.array(dtype=wp.float64)):
+def summarize_kernel(d: ParticleArrays, blocks: wp.array(dtype=wp.float64,ndim=2)):
     i=wp.tid()
     if d.active[i] == 1:
-        wp.atomic_add(summary,0,wp.float64(1.0))
-        wp.atomic_add(summary,1,wp.float64(d.volume[i]))
-        wp.atomic_add(summary,2,wp.float64(d.limited[i]))
+        group = i//256
+        wp.atomic_add(blocks,group,0,wp.float64(1.0))
+        wp.atomic_add(blocks,group,1,wp.float64(d.volume[i]))
+        wp.atomic_add(blocks,group,2,wp.float64(d.limited[i]))
+
+
+@wp.kernel
+def summarize_blocks(blocks: wp.array(dtype=wp.float64,ndim=2), summary: wp.array(dtype=wp.float64)):
+    k = wp.tid(); value=wp.float64(0.)
+    for i in range(blocks.shape[0]): value+=blocks[i,k]
+    summary[k]=value
 
 
 @wp.kernel
@@ -163,8 +187,9 @@ def gather_kernel(d: ParticleArrays, prefix: wp.array(dtype=int), display: wp.ar
 
 
 def read_stats(pool, frame) -> FrameStats:
-    pool.summary.zero_()
-    wp.launch(summarize_kernel,pool.capacity,inputs=[pool.data,pool.summary],device=pool.device)
+    pool.summary_blocks.zero_()
+    wp.launch(summarize_kernel,pool.capacity,inputs=[pool.data,pool.summary_blocks],device=pool.device)
+    wp.launch(summarize_blocks,3,inputs=[pool.summary_blocks,pool.summary],device=pool.device)
     counts = pool.counters.numpy()
     ledger = pool.ledger.numpy()
     summary = pool.summary.numpy()

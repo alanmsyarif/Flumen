@@ -10,7 +10,33 @@ and interactive preview at one million particles. The full-mesh measurements
 below are historical diagnostics, not the revised acceptance gate. The saved
 clips predate the large-particle collision/neighbor optimizations. A revised
 [particle-first design](superpowers/specs/2026-10-01-million-particle-preview-design.md)
-awaits review; no million-particle real-time claim or bake implementation exists.
+and its implementation plan are approved; implementation is in progress.
+No million-particle real-time claim or bake implementation exists.
+
+## Surface-field implementation evidence
+
+Source-local charts retain global face/barycentric anchors and use normalized
+three-node transfer even when radius is below field spacing. Uniform refinement
+is capped at 100,000 nodes; nonmanifold/steep edges are explicit barriers.
+Contact samples are capped at 2,097,152, retain face/island provenance and a
+conservative interpolation error bound, and flag nearby competing sheets.
+Deterministic segmented float64 sums preserve deposited volume and momentum.
+
+The water field uses density 1,000 kg/m³, tangent gravity, height-pressure and
+surface-tension gradients. Its physical graph Laplacian is
+`sum_j(w_ij*(h_j-h_i))/A_i` with nonnegative symmetric weights. Viscosity uses
+eight implicit Jacobi iterations per substep; resistance/damping use exponential
+integration. Existing pressure/cohesion acceleration caps are reported when
+activated. The stability bound includes tangent speed, gravity-height waves
+and capillary waves on the minimum chart edge; more than 64 steps raises an
+explicit error rather than skipping elapsed time. Particle state owns volume;
+field volume remains a derived deposit. Dry nodes cannot invent flow. Wetness
+uses exact physical-time exponential deposition/drying and zero-dt is inert.
+
+Actual CUDA fixtures verify flat-film equilibrium, downhill analytic drag,
+viscous energy decay, restoring capillary response, bounded step failure,
+source locality, subspacing volume transfer and physical-time wetness. These
+unit fixtures are numerical evidence, not million-particle viewport acceptance.
 
 ## Fixture and reproduction
 
