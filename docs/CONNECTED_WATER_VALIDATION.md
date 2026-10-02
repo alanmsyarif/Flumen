@@ -47,17 +47,38 @@ The raw minimum source/chart edge and operator spacing are distinct diagnostics.
 This intentionally limits numerical detail below the chosen field resolution;
 finer offline meshing does not restore that simulated detail.
 
-The retained [FIELD attached probe](../artifacts/field-million-attached-probe.json)
-uses one million live particles, 2 mm field/contact spacing and resistance 60:
-two warmup plus ten measured solver-only intervals average 24.73 FPS, with
-finite state and ledger relative error 6.49e-10. This predates the latest CUDA
-graph reuse and duplicate-transfer removal; their performance is unmeasured.
-The probe does not draw particles and misses the real-time target. Stage timings
-are incomplete wall/launch diagnostics; owned-array memory reporting is pending.
-Free, mixed and dense FIELD characterization and the 120+600 actual full-count
-viewport gate have not run. Checkpoint suites: 68 Python, 73 CUDA and 61 Blender
-tests passed. Work is paused at the user's request; see the
-[resume checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md).
+The first [FIELD attached probe](../artifacts/field-million-attached-probe.json)
+(24.73 FPS) predates CUDA graph reuse. After graph reuse, 32-bit deposit sort
+keys and chunked contact fallback, the same Suzanne fixture (one million live
+particles, 2 mm field/contact spacing, resistance 60, two warmup plus ten
+measured intervals) gives these solver-only results on the RTX 5050:
+
+| Distribution | Solver-only FPS | Median ms | Notes |
+|---|---|---|---|
+| [attached](../artifacts/field-million-attached-graph.json) | 47.3 | 19.7 | 64 field steps per interval |
+| [free](../artifacts/field-million-free-graph.json) | 61.8 | 16.1 | still pays 5.7 ms deposit, 2.4 ms field |
+| [mixed](../artifacts/field-million-mixed-graph.json) | 48.1 | 19.5 | |
+| [dense](../artifacts/field-million-dense-graph.json) | failed | | frame 2: field needs 231 steps, over the 64 bound |
+
+All passing runs are finite with ledger relative error at most 6.5e-10. Stage
+times are CUDA events summed per seek and add up to solver time (attached:
+field 4.1, contact 2.3, aggregation 4.9, resampling 1.5, deposit 5.6 ms).
+Tracked CUDA arrays use 582 MiB, excluding BVH and graph storage. The dense
+fixture places all particles on one anchor; its explicit bounded failure is
+recorded, not hidden. The attached distribution runs at the 64-step hard limit
+after power-of-two rounding (36-54 required).
+
+A [60-interval attached run](../artifacts/field-million-attached-long.json)
+first failed at interval 28: Suzanne's 196 open-boundary faces (eye sockets,
+ears) drip water into crevices whose ambiguous contact cells send every trapped
+particle to exact BVH fallback, which grew past the 65536-entry queue. By user
+ruling, fallback now runs in repeated 65536-entry chunks. The run passes at
+41.5 FPS solver-only (p95 25.4 ms) with 170k fallback particles by the end.
+A free-merge regression with opposing and zero normals stays finite.
+
+None of these runs draws particles. The 120+600 full-count viewport gate has not
+run. Suites: 68 Python, 75 CUDA and 61 Blender tests pass. Resume steps are in
+the [checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md).
 
 ## Fixture and reproduction
 

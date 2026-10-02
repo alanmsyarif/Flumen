@@ -145,3 +145,18 @@ class FieldMotionTests(unittest.TestCase):
         owned=stats.owned_array_bytes
         self.assertGreaterEqual(owned,solver.pool.capacity*12)
         self.assertEqual(solver.seek(4).owned_array_bytes,owned)
+
+    def test_free_merge_with_opposing_or_zero_normals_stays_finite(self):
+        from flumen.gpu.field_aggregate import aggregate_field_particles
+        cfg=replace(self.make().config,merge_distance_scale=.25)
+        solver=self.make(cfg); solver.seek(1)
+        point=[.05,.05,.5]
+        self.set_particles(solver,[point]*4,[[.3,.3]]*4,states=[1]*4)
+        solver.pool.data.normal.assign([[0,0,1],[0,0,-1],[0,0,0],[0,0,0]]+[[0,0,0]]*(solver.pool.capacity-4))
+        solver.pool.data.island.assign([0]*solver.pool.capacity)
+        aggregate_field_particles(solver.pool,solver.prepared,solver.config)
+        d=solver.pool.data; active=d.active.numpy()==1
+        self.assertEqual(int(active.sum()),2)
+        for name in ('position','velocity','normal','bary','volume'):
+            self.assertTrue(np.isfinite(getattr(d,name).numpy()[active]).all(),name)
+        np.testing.assert_allclose(d.volume.numpy()[active].sum(),4e-12,rtol=1e-6)

@@ -1,6 +1,6 @@
 # Implementation status — connected development and legacy releases
 
-## Connected development checkpoint, 2026-10-01
+## Connected development checkpoint, 2026-10-02
 
 The development branch now has GPU surface interactions, conservative merging,
 initial coating/time controls, attached/free mesh reconstruction and persistent
@@ -9,16 +9,17 @@ reference gate still fails: coating/channels are too coarse and patchy.
 
 The user now permits offline final meshing and requires interactive particle
 simulation at one million particles. Current solver-only probes are below that
-target: the latest measured FIELD attached probe reached 24.73 FPS with one
-million live particles, before graph reuse and duplicate-transfer removal.
+target: FIELD reaches 47.3 FPS attached, 61.8 free and 48.1 mixed solver-only
+with one million live particles; the dense single-anchor fixture fails at the
+64-step field bound. Particles are not drawn yet.
 The revised [design](superpowers/specs/2026-10-01-million-particle-preview-design.md)
 and plan are approved. Surface preparation and field dynamics are complete;
-particle transport/aggregation is in progress. Point drawing and offline baking
-remain unfinished. Work is paused at the user's request; the
+particle transport/aggregation (Task 3) is complete. Point drawing and offline
+baking remain unfinished. The
 [saved checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md) records
 the resume steps. No version 0.0.4 package or release is delivered.
 
-Verified checkpoint: 68 Python, 73 CUDA and 61 Blender tests. Raw results,
+Verified checkpoint: 68 Python, 75 CUDA and 61 Blender tests. Raw results,
 reproduction and limitations are in
 [Connected validation](CONNECTED_WATER_VALIDATION.md). The earlier 0.0.3
 measurements below are historical Drops evidence, not proof for this increment.

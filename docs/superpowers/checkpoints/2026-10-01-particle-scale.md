@@ -1,6 +1,6 @@
 # Saved checkpoint — million-particle field work
 
-**Paused at the user's explicit request on 2026-10-01. Resume only when requested.**
+**Updated 2026-10-02: revised Task 3 complete. Resume at Task 4 when requested.**
 
 The revised [design](../specs/2026-10-01-million-particle-preview-design.md) and
 [plan](../plans/2026-10-01-million-particle-preview.md) are both approved. Native
@@ -8,69 +8,43 @@ sequential execution is selected, with one fresh independent final review.
 
 ## Current saved implementation
 
-- Revised Task 1 complete: bounded chart/contact preparation, conservative
-  three-node transfer, global face provenance and mirrored-winding correction
-  (`5ed088b`).
-- Revised Task 2 complete: bounded field gravity/pressure/capillary dynamics,
-  implicit viscosity, physical-time wetness and block-reduced stats (`d747231`).
-- Revised Task 3 in progress: FIELD transport with staged contact validation,
-  bounded aggregation/resampling and benchmark distributions are implemented.
-  FIELD allocates no legacy particle-neighbor arrays or live meshing buffers.
-- Latest changes reuse captured field operations and the previous completed
-  interval's deposit. Attached/free counts are reported. Captured/eager evolution
-  agrees in regression tests; latest performance has not been measured.
+- Task 1 (`5ed088b`) and Task 2 (`d747231`) complete, as before.
+- Task 3 complete (`60cf74b`..HEAD): FIELD transport, bounded aggregation and
+  resampling; 32-bit deposit sort keys (frame-1 deposit bit-identical);
+  CUDA-event stage timings including deposit/resampling plus owned CUDA array
+  bytes; contact fallback resolved in repeated 65536-entry chunks (user ruling
+  2026-10-02); benchmark writes explicit failure reports with last valid stats.
+- Solver-only, one million particles, Suzanne, 2 mm spacing, resistance 60:
+  attached 47.3 FPS, free 61.8, mixed 48.1; dense single-anchor fails at frame 2
+  (field needs 231 steps > 64). 60-interval attached run passes at 41.5 FPS.
+  See `docs/CONNECTED_WATER_VALIDATION.md` and `artifacts/field-million-*`.
 
-Checkpoint verification: **68 Python, 73 CUDA and 61 Blender tests passed**.
-Focused dynamics (7) and motion (6) cover graph/eager agreement, fine-triangle
-crossings, thin-sheet collision, overfull-contact rollback, dense conservation,
-births, replay and distribution counts. No independent final review has run.
+Verification: **68 Python, 75 CUDA and 61 Blender tests passed**. No independent
+final review has run.
 
-The retained [million-particle attached probe](../../../artifacts/field-million-attached-probe.json)
-predates graph reuse and duplicate-transfer removal: two warmup plus ten measured
-solver-only intervals, one million live particles, **24.73 FPS**, finite state and
-ledger relative error **6.49e-10**. It uses field/contact spacing 2 mm, resistance
-60, nominal radius 0.1 mm and time scale 0.5 on the 15,744-triangle Suzanne.
-Default 1 mm field spacing had exceeded the 64-substep bound after regularization.
-This short probe misses the target and proves no viewport acceptance.
+Open observations, not blockers:
+- Attached runs sit at the 64 field-step hard limit after power-of-two rounding.
+- Free-only runs still pay deposit (5.7 ms) and field (2.4 ms) with no attached
+  particles; compacting attached-only contributions would remove most of it.
+- Pipeline differs run-to-run by about 1e-8 m in position by frame 4 (within the
+  1e-6 replay tolerance); frame-1 deposit is deterministic.
+- Suzanne's open eye/ear boundaries trap water in ambiguous crevices; fallback
+  count grows about 2.4k per interval at roughly 3-4 ms contact cost.
 
-Numerical rulings: derivative operators use at least half requested field spacing
-while retaining exact source geometry/anchors; motion detail below that spacing
-is suppressed. Required substeps round upward to powers of two, with a hard limit
-of 64. Main attached walks cross at most 8 source edges; queued walks add at most
-32 before narrowly eligible exact fallback. Overfull/unresolved contacts reject
-the proposed interval. Resampling retains 99% parent volume and gives 1% to a
-child at the identical anchor/velocity; no emitted mass is added. Uneven marker
-weights require further evaluation.
+## Resume at Task 4
 
-## Resume at revised Task 3
+1. Read this checkpoint, approved spec/plan and the native ledger
+   `.superpowers/sdd/2026-10-01-million-particle-preview/progress.md`. Do not
+   redo Tasks 1-3 or original connected-water Tasks 1-8.
+2. Tasks 4-9: compact direct point draw, physical/cosmetic signatures and
+   preparation reuse, full-count viewport and reference gates, immutable particle
+   cache, CPU offline mesher/CUDA-free playback, final independent review, docs
+   and package checks.
 
-1. Read this checkpoint, approved spec/plan and retained native ledger. Do not
-   redo revised Tasks 1–2 or original connected-water Tasks 1–8.
-2. Measure graph/deposit optimizations with the same million-particle attached
-   fixture; characterize free, mixed and dense distributions separately. Save
-   explicit benchmark failures and last valid states, not only successful runs.
-3. Finish accurate GPU stage timings and owned-array memory reporting. Existing
-   field/contact values are wall diagnostics, aggregation records launch time,
-   and owned-array bytes are not populated. Separate tracked allocations from
-   BVH/graph storage and whole-device VRAM.
-4. Investigate the growing contact ambiguity/fallback count before long runs.
-   Profile empty-field execution and compact attached-only transfer before
-   optimizing; preserve thin/folded-sheet provenance and bounded failures.
-5. Check opposing/zero normals during free aggregation; add a failing regression
-   before fixing any demonstrated nonfinite result.
-6. Complete Task 3 validation/ledger, then Tasks 4–9: compact direct point draw,
-   physical/cosmetic signatures and preparation reuse, full-count viewport and
-   reference gates, immutable particle cache, CPU offline mesher/CUDA-free
-   playback, final independent review, docs and package checks.
-
-Scratch is retained at `.superpowers/sdd/2026-10-01-million-particle-preview/`:
-`progress.md`, `task-3.md`, RED/GREEN logs, `task3-checkpoint-cuda-full.log` and
-`task3-checkpoint-blender-full.log`. Preserve the older connected-water scratch.
-The plan does not mark Task 3 complete. Point preview, portable particle bake,
-version 0.0.4, corrected reference visuals and real-time acceptance are unfinished.
-Local PDF/video references, demo scenes and ignored clips are preserved.
-The user explicitly authorized this checkpoint commit/push; a future merge or
-publication requires its own authorization.
+Point preview, portable particle bake, version 0.0.4, corrected reference
+visuals and real-time viewport acceptance are unfinished. Local PDF/video
+references, demo scenes and ignored clips are preserved. A merge, push or
+publication requires the user's authorization.
 
 ## Historical checkpoint before revised implementation
 
