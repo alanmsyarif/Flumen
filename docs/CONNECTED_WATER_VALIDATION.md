@@ -84,8 +84,82 @@ one million drawn points at 30.6 FPS (median frame 32.6 ms, p95 34.3 ms) over
 30 frames after 3 warmup frames. Medians: solver 19.8, point readback 1.5,
 VBO upload 2.1, draw submit 2.4 and whole redraw 10.1 ms. Copies cost about
 3.6 ms, so CUDA/graphics interop is not justified; the solver dominates. This
-short probe is not the 120+600 full-count viewport gate, which has not run. Suites: 68 Python, 75 CUDA and 61 Blender tests pass. Resume steps are in
-the [checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md).
+short probe was superseded by the full gate below.
+
+### Million-particle 1080p viewport gate (Task 6)
+
+`scripts/benchmark_particle_viewport.py` drives Blender's GUI at 1920x1080
+(OpenGL, solid shading, 2 px points). Each measured draw advances exactly one
+integer interval; a POST_PIXEL one-pixel readback waits for GPU completion.
+`flumen/gpu/preview_report.py` validates every report: 120 warmup plus 600
+measured draws, at least 1,000,000 live and displayed throughout, mean FPS from
+wall time >= 30, p95 <= 33.3 ms, no skipped intervals, no unresolved contacts,
+ledger <= 1e-5 and owned arrays distinct from whole-device VRAM.
+
+Getting there needed three solver changes, each made by user ruling with
+regression tests:
+
+1. Drip release: attached water on downward-facing surfaces releases as drops
+   when local film thickness times how much the surface faces down exceeds the
+   capillary length (about 2.7 mm). Before this, adhesion 15 > g meant hanging
+   water never released and pooled indefinitely.
+2. Thin-film wall drag: field damping adds 3 nu / h^2, so near-dry film fronts
+   no longer reach about 0.45 m/s under capillary forces.
+3. Fixed field substeps: thickness is frozen within each interval, so the old
+   wave-speed substep demand guarded a coupled scheme that does not exist. With
+   8 substeps instead of about 55, a 720-frame run matched within run-to-run
+   noise. Substeps now equal `minimum_substeps`; the interval Courant number is
+   reported (max about 8.3) and only nonfinite field state aborts.
+
+Deposit also now sorts only attached contributions (bit-identical results).
+
+Final [attached](../artifacts/particle-viewport-attached.json),
+[free](../artifacts/particle-viewport-free.json),
+[mixed](../artifacts/particle-viewport-mixed.json) and
+[dense](../artifacts/particle-viewport-dense.json) runs, RTX 5050, Blender 5.2.0,
+Warp 1.17.0, with DaVinci Resolve closed:
+
+| Distribution | Gate | Mean FPS | Median ms | p95 ms | Max ms | Ledger |
+|---|---|---|---|---|---|---|
+| attached | PASS | 34.3 | 28.8 | 31.2 | 41.5 | 1.6e-9 |
+| free | PASS | 45.6 | 21.7 | 23.6 | 25.8 | 5.0e-10 |
+| mixed | PASS | 42.1 | 23.5 | 25.3 | 26.8 | 5.7e-10 |
+| dense | PASS | 47.2 | 21.0 | 23.0 | 26.0 | 3.0e-9 |
+
+Attached medians: solver 15.6 (field 1.2, contact 2.3, aggregation 4.9,
+resampling 1.4, deposit 5.5), readback 1.5, upload 2.2, draw submit 2.2 and
+whole redraw 10.2 ms. Tracked CUDA arrays use 582 MiB; whole-device VRAM read
+1.75-2.0 GiB. Attached has only about 2 ms of p95 margin. With Resolve running,
+one attached run failed (p95 36.8 ms) with every stage, including viewport
+redraw, uniformly 20-30% slower in bands; those runs are not counted. The
+single-anchor dense blob exceeds the drip threshold and falls, so it stops
+being clustered attached flow early. A separate 600-frame
+[dense solver stress](../artifacts/field-million-dense-stress.json) runs at
+93.6 FPS solver-only (p95 11.5 ms, ledger 4.5e-9).
+
+### Drainage against the reference (Task 6): FAIL
+
+`scripts/capture_field_drainage.py` with `examples/create_field_water_demo.py`
+coats the top of Suzanne with one million particles emitted from the collision
+surface itself (attached, zero initial velocity), then runs 180 frames (3 s
+simulated). [Metrics](../artifacts/field-drainage.json) and stills
+([f001](../artifacts/field-drainage-f001.png), [f180](../artifacts/field-drainage-f180.png)):
+
+- the coating front moves down only 1.7 cm (mean 1.2 cm);
+- thickness contrast rises from 0.33 to 0.84 and top-10% channel overlap across
+  30 frames rises from 0.08 to 0.39, so concentration forms and persists;
+- 903 particles grow above 10x initial volume; 150k attached-to-free events;
+  absolute ledger error stays below 1.3e-15 m^3.
+
+Compared with the reference bust frames, the front stays a uniform sheet with
+short tongues instead of distinct rivulet fingers and long hanging drips, and
+drains far too slowly. Recaptured drops on the chin also show a lattice-like
+dot pattern. Likely cause: resistance 60 (chosen earlier for benchmark
+stability) plus the new wall drag; a 0.1 mm film's terminal speed on a vertical
+wall is about g/(60+300) = 2.7 cm/s. Visual tuning is unfinished; the passing
+performance gates use these same settings.
+
+Suites: 90 Python, 80 CUDA and 68 Blender tests pass.
 
 ## Fixture and reproduction
 

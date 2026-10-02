@@ -8,18 +8,21 @@ wetness. Both 180-frame clips and comparison stills exist, but the visual
 reference gate still fails: coating/channels are too coarse and patchy.
 
 The user now permits offline final meshing and requires interactive particle
-simulation at one million particles. Current solver-only probes are below that
-target: FIELD reaches 47.3 FPS attached, 61.8 free and 48.1 mixed solver-only
-with one million live particles; the dense single-anchor fixture fails at the
-64-step field bound. Particles are not drawn yet.
+simulation at one million particles. The Surface Field preview meets the
+1080p viewport target on the RTX 5050: attached, free, mixed and dense runs
+each complete 120 warmup plus 600 measured full-count draws at 34-47 FPS with
+p95 23-31 ms (attached has about 2 ms margin; background GPU apps must be
+closed). The visual drainage comparison against the reference fails: the
+coating drains far too slowly and forms no distinct rivulets.
 The revised [design](superpowers/specs/2026-10-01-million-particle-preview-design.md)
-and plan are approved. Surface preparation and field dynamics are complete;
-particle transport/aggregation (Task 3) is complete. Point drawing and offline
-baking remain unfinished. The
+and plan are approved. Tasks 1-6 (preparation, field dynamics, transport,
+point drawing, preparation reuse, measured gates) are complete; drip release,
+thin-film wall drag and fixed field substeps were added by user ruling. The
+particle cache and offline baking (Tasks 7-9) remain unfinished. The
 [saved checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md) records
 the resume steps. No version 0.0.4 package or release is delivered.
 
-Verified checkpoint: 68 Python, 75 CUDA and 61 Blender tests. Raw results,
+Verified checkpoint: 90 Python, 80 CUDA and 68 Blender tests. Raw results,
 reproduction and limitations are in
 [Connected validation](CONNECTED_WATER_VALIDATION.md). The earlier 0.0.3
 measurements below are historical Drops evidence, not proof for this increment.
