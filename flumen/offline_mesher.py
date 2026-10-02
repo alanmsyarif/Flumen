@@ -523,10 +523,17 @@ def iter_mesh_cache(reader, options: MeshOptions, destination: Path, workers: in
             results = (mesh_cached_frame(reader, f, options, destination, lambda: False, static=static, lattice=lattice)
                        for f in frames)
         else:
+            import sys
             from concurrent.futures import ProcessPoolExecutor
             pool = ProcessPoolExecutor(workers, mp_context=_worker_context(), initializer=_worker_start,
                                        initargs=(str(reader.path), options))
-            results = pool.map(_worker_frame, frames, [destination]*len(frames))
+            # Spawned workers re-run the parent's main script unless it is hidden; inside Blender that
+            # script imports bpy, which the bundled Python cannot load. Workers only need this module.
+            main = sys.modules.get('__main__'); hidden = getattr(main, '__file__', None)
+            if hidden is not None: del main.__file__
+            try: results = pool.map(_worker_frame, frames, [destination]*len(frames))
+            finally:
+                if hidden is not None: main.__file__ = hidden
         for result in results:
             manifest['frames'][str(result['frame'])] = result; save()
             yield result
