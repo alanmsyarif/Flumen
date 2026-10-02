@@ -8,7 +8,6 @@ artifacts/extension-stage-gpu*/
 artifacts/extension-stage-particles*/
 artifacts/flumen-0.0.3*.zip
 artifacts/*.log
-artifacts/flumen-0.0.4*.zip
 artifacts/Flumen_Connected_Water_Demo.blend*
 artifacts/connected-*.mp4
 artifacts/connected-*_frames/
