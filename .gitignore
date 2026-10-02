@@ -14,3 +14,4 @@ artifacts/connected-*_frames/
 artifacts/probe-screen.png
 artifacts/connected-geometry-probe.json
 artifacts/offline-clip-*.mp4
+.clip-work/
