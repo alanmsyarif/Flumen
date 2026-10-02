@@ -167,3 +167,18 @@ def test_parallel_sequence_matches_serial_bit_for_bit(tmp_path):
     assert parallel['status'] == 'complete'
     assert {f: r['sha256'] for f, r in serial['frames'].items()} == {f: r['sha256'] for f, r in parallel['frames'].items()}
     assert all(r['free_triangles'] > 0 for r in serial['frames'].values())
+
+
+def test_film_smoothing_closes_speckle_and_conserves_volume(tmp_path):
+    # Sparse particles leave a noisy film near the clip threshold: holes appear inside the wet area.
+    particles = film_particles(count=3000, total=1.5e-9, seed=7)  # ~15 um mean, ~2 particles per node
+    reader = write_cache(tmp_path/'noisy', *SQUARE, [0, 0], particles)
+    holes, volumes = [], []
+    for iterations in (0, 6):
+        film = list(iter_mesh_tiles(reader, 1, MeshOptions(spacing=.0004, film_smoothing=iterations)))[0].attached
+        volumes.append(film.diagnostics['represented_volume'])
+        holes.append(film.diagnostics['dry_nodes'])
+        assert closed(film.triangles)
+    assert abs(volumes[1]-volumes[0]) <= volumes[0]*1e-9
+    assert holes[1] < holes[0]*.5
+    with pytest.raises(ValueError): MeshOptions(spacing=.001, film_smoothing=-1)

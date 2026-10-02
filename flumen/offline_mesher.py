@@ -37,6 +37,7 @@ class MeshOptions:
     tile_cells: int = 32
     min_thickness: float = 1e-5
     max_triangles: int = 20_000_000
+    film_smoothing: int = 0        # volume-conserving diffusion steps on deposited film thickness
 
     def __post_init__(self):
         for value in (self.spacing, self.film_spacing, self.min_thickness):
@@ -44,6 +45,8 @@ class MeshOptions:
         if self.spacing <= 0: raise ValueError('Mesh spacing must be positive')
         if not 1 <= self.tile_cells <= 32: raise ValueError('Tiles hold 1 to 32 cells per axis')
         if self.max_triangles < 1: raise ValueError('Triangle budget must be positive')
+        if isinstance(self.film_smoothing, bool) or not isinstance(self.film_smoothing, int) or self.film_smoothing < 0:
+            raise ValueError('Film smoothing must be a nonnegative integer')
 
 
 def chart_anchor(faces, bary, level):
@@ -116,7 +119,8 @@ def film_lattice(static, options):
     np.add.at(normals, tris.ravel(), np.repeat(np.repeat(cross, len(small), axis=0), 3, axis=0))
     np.add.at(node_area, tris.ravel(), np.repeat(small_area/3., 3))
     normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-30)
-    return dict(n=n, F=F, local=local, node=node, count=count, positions=positions, normals=normals,
+    edges = np.unique(np.sort(np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]), axis=1), axis=0)
+    return dict(n=n, F=F, local=local, node=node, count=count, positions=positions, normals=normals, edges=edges,
                 node_area=node_area, tris=tris, max_spacing=float(lengths.max())/n, film_spacing=spacing)
 
 
@@ -141,16 +145,35 @@ def _film(static, cached, options, lattice=None):
                            np.stack([local[i0, j0], local[i0+1, j0], local[i0, j0+1]], 1))
         # bincount adds in input order, exactly like np.add.at, but without its per-element overhead.
         volume += np.bincount(node[f[:, None], corners].ravel(), (w*arrays['volume'][attached][:, None]).ravel(), count)
-    thickness = volume/np.maximum(lattice['node_area'], 1e-30)
+    area = np.maximum(lattice['node_area'], 1e-30)
+    volume = _smooth_film(volume, area, lattice['edges'], options.film_smoothing)
+    thickness = volume/area
     represented = float(volume.sum())
     mesh = _film_shell(lattice['positions'], lattice['normals'], thickness, lattice['tris'],
                        options.min_thickness, options.max_triangles)
     mesh_volume = _signed_volume(mesh.vertices, mesh.triangles)
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
         excluded_volume=max(0., represented-mesh_volume), film_segments=n, film_nodes=count,
+        dry_nodes=int((thickness < options.min_thickness).sum()),
         film_max_spacing=lattice['max_spacing'],
         unanchored_volume=float(arrays['volume'][(arrays['state'] == 0) & ~attached].astype(np.float64).sum()))
     return mesh
+
+
+def _smooth_film(volume, area, edges, steps):
+    """Diffuse film thickness along lattice edges by exchanging volume symmetrically: total volume
+    is exact, and each step is a convex average (no negative or overshooting thickness).
+    Thins sampling noise from sparse particles so the clip threshold does not punch holes."""
+    if not steps or not len(edges): return volume
+    a, b = edges[:, 0], edges[:, 1]
+    degree = np.bincount(edges.ravel(), minlength=len(volume)).max()
+    conductance = .5/degree*np.minimum(area[a], area[b])
+    volume = volume.copy()
+    for _ in range(steps):
+        h = volume/area
+        flux = conductance*(h[a]-h[b])
+        volume += np.bincount(b, flux, len(volume))-np.bincount(a, flux, len(volume))
+    return volume
 
 
 def _film_shell(positions, normals, thickness, tris, hmin, budget):
