@@ -5,6 +5,7 @@ import numpy as np
 import warp as wp
 from warp.utils import array_scan
 from .source import Samples
+from ..water_types import MeshBatch, WaterGeometry  # re-exported for existing imports
 
 
 @wp.struct
@@ -44,26 +45,6 @@ class DisplayBatch:
     states: np.ndarray | None = None
     faces: np.ndarray | None = None
     islands: np.ndarray | None = None
-
-
-@dataclass
-class MeshBatch:
-    vertices: np.ndarray
-    normals: np.ndarray
-    triangles: np.ndarray
-    diagnostics: dict = field(default_factory=dict)
-
-    @classmethod
-    def empty(cls,**diagnostics):
-        return cls(np.empty((0,3),np.float32),np.empty((0,3),np.float32),
-                   np.empty((0,3),np.int32),diagnostics)
-
-
-@dataclass
-class WaterGeometry:
-    attached: MeshBatch
-    free: MeshBatch
-    diagnostics: dict = field(default_factory=dict)
 
 
 @dataclass
