@@ -18,6 +18,9 @@ class SF_PT_gpu(bpy.types.Panel):
         layout.label(text='Stationary surface • live preview')
         layout.prop(settings,'source')
         layout.operator('flumen.reset_gpu_flow',icon='FILE_REFRESH')
+        if settings.solver_backend=='FIELD':
+            layout.operator('flumen.bake_particle_cache',icon='FILE_CACHE')
+            if host.get('sf_particle_cache'): layout.label(text=f"Cache: {host['sf_particle_cache']}",icon='CHECKMARK')
         error=host.get('sf_gpu_error','')
         if error:
             box=layout.box(); box.alert=True

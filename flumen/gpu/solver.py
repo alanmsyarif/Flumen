@@ -181,6 +181,21 @@ class FlowSolver:
             self.stats.displayed_count = batch.displayed_count
         return batch
 
+    def cache_snapshot(self):
+        """Exact host copy of every active particle and the frame's accounting, for baking."""
+        import numpy as np
+        from ..particle_cache import CachedFrame, PARTICLE_FIELDS
+        if self.pool is None or self.current_frame is None:
+            raise RuntimeError('GPU runtime has no evaluated frame')
+        data=self.pool.data
+        slots=np.flatnonzero(data.active.numpy()==1).astype(np.int32)
+        arrays={'slot':slots}
+        for name,(dtype,_) in PARTICLE_FIELDS.items():
+            if name!='slot': arrays[name]=getattr(data,name).numpy()[slots].astype(dtype)
+        wetness=self.field.wetness.numpy().astype(np.float32) if self.field is not None else np.zeros(0,np.float32)
+        return CachedFrame(self.current_frame,arrays,wetness,self.pool.counters.numpy().astype(np.int64),
+                           self.pool.ledger.numpy().astype(np.float64),int(self.pool.next_id))
+
     def reset(self):
         if self.pool is not None:
             self.pool.close()
