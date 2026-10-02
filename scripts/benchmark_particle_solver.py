@@ -20,6 +20,28 @@ from flumen.gpu_runtime import extract_source
 from gpu_memory import memory_snapshot
 
 
+def apply_distribution(solver, distribution):
+    """Rearrange the frame-1 coating in place; volume and particle count are unchanged."""
+    if distribution=='attached': return
+    states=solver.pool.data.state.numpy()
+    positions=solver.pool.data.position.numpy()
+    if distribution=='free':
+        states[:]=1; positions[:,2]+=1.
+    elif distribution=='mixed':
+        states[::2]=1; positions[::2,2]+=1.
+    elif distribution=='dense':
+        # All particles concentrate at a real source anchor, not a decimated proxy.
+        positions[:]=positions[0]
+        for name in ('face','bary','island','normal'):
+            array=getattr(solver.pool.data,name); values=array.numpy(); values[:]=values[0]; array.assign(values)
+    else:
+        raise ValueError(f'Unknown distribution {distribution!r}')
+    solver.pool.data.state.assign(states); solver.pool.data.position.assign(positions)
+    if solver.field is not None:
+        from flumen.gpu.field_solver import deposit_attached
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--capacity',type=int,default=1_000_000)
@@ -56,23 +78,7 @@ def main():
         preparation_seconds=time.perf_counter()-prepare_start
         setup=time.perf_counter(); solver.seek(1)
         setup_seconds=time.perf_counter()-setup
-        if args.distribution!='attached':
-            import warp as wp
-            states=solver.pool.data.state.numpy()
-            positions=solver.pool.data.position.numpy()
-            if args.distribution=='free':
-                states[:]=1; positions[:,2]+=1.
-            elif args.distribution=='mixed':
-                states[::2]=1; positions[::2,2]+=1.
-            else:
-                # All particles concentrate at a real source anchor, not a decimated proxy.
-                positions[:]=positions[0]
-                for name in ('face','bary','island','normal'):
-                    array=getattr(solver.pool.data,name); values=array.numpy(); values[:]=values[0]; array.assign(values)
-            solver.pool.data.state.assign(states); solver.pool.data.position.assign(positions)
-            if solver.field is not None:
-                from flumen.gpu.field_solver import deposit_attached
-                deposit_attached(solver.pool,solver.prepared,solver.field)
+        apply_distribution(solver,args.distribution)
         samples=[]; stages=[]; frame=1
         try:
             for frame in range(2,2+args.warmup): solver.seek(frame)

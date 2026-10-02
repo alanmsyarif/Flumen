@@ -149,4 +149,4 @@ def main():
     bpy.app.timers.register(start,first_interval=1.)
 
 
-main()
+if __name__=='__main__': main()
