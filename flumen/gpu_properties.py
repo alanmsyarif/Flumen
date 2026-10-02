@@ -52,7 +52,7 @@ _bounds = {
     'merge_distance_scale':(0,1),'maximum_merged_radius_scale':(1,8),
     'reconstruction_scale':(.5,4),'wetness_deposit_rate':(0,1000),'wetness_drying_rate':(0,1000),
     'field_spacing':(.00005,.02),'contact_spacing':(.00005,.05),
-    'field_viscosity':(0,.01),'surface_tension':(0,1),'resample_target':(0,1000000),
+    'field_viscosity':(0,.01),'surface_tension':(0,1),'contact_hysteresis':(0,2),'resample_target':(0,1000000),
 }
 for field in fields(FlowConfig):
     opts={'name':field.name.replace('_',' ').title(),'default':field.default,'update':changed}

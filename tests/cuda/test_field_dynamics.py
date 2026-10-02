@@ -65,6 +65,31 @@ class FieldDynamicsTests(unittest.TestCase):
             drag=5+3e-6/height**2
             np.testing.assert_allclose(b.velocity.numpy()[:,2],-(1-np.exp(-drag))/drag,rtol=1e-3)
 
+    def test_dry_contact_line_pins_thin_film(self):
+        # Contact-angle hysteresis: a dry surface holds a film until gravity beats
+        # (sigma/rho) dcos / (h L); wet tracks and thick films are free.
+        cfg=FlowConfig(capacity=8,resistance=5,gravity=(0,0,-9.81),surface_damping=0,
+                       field_viscosity=0,surface_tension=.072,contact_hysteresis=.3)
+        free=-(1-np.exp(-.5))/5*9.81
+        speeds={}
+        for wet in (0.,1.):
+            for height in (.00005,.01):
+                p,b,cfg=self.make([[0,0,0],[.1,0,0],[0,0,.1]],cfg)
+                b.volume.assign(p.chart.areas*height); b.thickness.assign([height]*len(p.chart.vertices))
+                b.wetness.assign([wet]*len(p.chart.vertices))
+                self.evolve(p,b,cfg,.1)
+                speeds[wet,height]=b.velocity.numpy()[:,2]
+                if wet == 0.:   # a held contact line has not advanced, so it does not wet the surface
+                    self.assertEqual(bool(np.all(b.wetness.numpy()==0)),height==.00005)
+                pin=.072/1000*.3/(height*p.chart.operator_spacing)
+                expected=free*max(0.,1.-(1.-wet)*pin/9.81)
+                # wetting during the interval is not applied before the kick
+                np.testing.assert_allclose(speeds[wet,height],expected,rtol=1e-4,atol=1e-7)
+        self.assertTrue(np.all(speeds[0.,.00005]==0))          # thin film on dry surface: pinned
+        self.assertTrue(np.all(speeds[1.,.00005]<0))           # same film on a wet track: flows
+        self.assertTrue(np.all(speeds[0.,.01]<0))             # thick front breaks through
+        with self.assertRaises(ValueError): FlowConfig(capacity=8,contact_hysteresis=3.).validate()
+
     def test_capillary_response_and_substep_guard(self):
         p,b,cfg=self.make()
         height=np.full(len(p.chart.vertices),.001,np.float32)

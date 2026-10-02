@@ -40,7 +40,7 @@ class SF_PT_gpu(bpy.types.Panel):
                          else ('point_size','point_color')):
                 layout.prop(settings,name)
         if settings.solver_backend=='FIELD':
-            for name in ('field_spacing','contact_spacing','field_viscosity','surface_tension','resample_target'):
+            for name in ('field_spacing','contact_spacing','field_viscosity','surface_tension','contact_hysteresis','resample_target'):
                 layout.prop(settings,name)
         elif settings.interactions_enabled:
             layout.label(text='Pairwise backend: bounded neighbors, not for million-particle editing',icon='INFO')

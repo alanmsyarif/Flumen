@@ -108,6 +108,7 @@ class FieldBuffers:
         self.thickness = wp.zeros(count,dtype=float,device=device)
         self.velocity = wp.zeros(count,dtype=wp.vec3,device=device)
         self.wetness = wp.zeros(count,dtype=float,device=device)
+        self.pinned = wp.zeros(count,dtype=int,device=device)
         self.unsupported = wp.zeros(1,dtype=wp.float64,device=device)
         self.starts = wp.full(count,-1,dtype=int,device=device)
         self.ends = wp.zeros(count,dtype=int,device=device)
@@ -225,8 +226,10 @@ def field_kick(velocity: wp.array(dtype=wp.vec3), height: wp.array(dtype=float),
                normals: wp.array(dtype=wp.vec3), pressure: wp.array(dtype=wp.vec3),
                capillary: wp.array(dtype=wp.vec3), gravity: wp.vec3, sigma: float,
                pressure_cap: float, capillary_cap: float, drag: float, viscosity: float, dt: float,
+               wetness: wp.array(dtype=float), pinning: float, pinned: wp.array(dtype=int),
                limited: wp.array(dtype=int)):
     i = wp.tid(); normal = normals[i]
+    pinned[i] = 0
     if height[i] <= 0.:
         velocity[i] = wp.vec3(0.)
         return
@@ -239,6 +242,15 @@ def field_kick(velocity: wp.array(dtype=wp.vec3), height: wp.array(dtype=float),
         c *= capillary_cap/wp.length(c); wp.atomic_add(limited,0,1)
     acceleration += p+c
     acceleration -= normal*wp.dot(acceleration,normal)
+    # Contact-angle hysteresis on dry surface: the contact line holds up to (sigma/rho) dcos / (h L)
+    # per unit mass, so thin fronts wait while thick ones break through; wet tracks are free.
+    if pinning > 0.:
+        hold = (1.-wetness[i])*pinning/height[i]
+        magnitude = wp.length(acceleration)
+        if magnitude <= hold:
+            acceleration = wp.vec3(0.); pinned[i] = 1
+        else:
+            acceleration *= 1.-hold/magnitude
     value = velocity[i]-normal*wp.dot(velocity[i],normal)
     # Lubrication wall shear 3 nu / h^2: thin film fronts cannot outrun the film.
     damping = drag+3.*viscosity/wp.max(height[i]*height[i],1.e-24)
@@ -246,6 +258,20 @@ def field_kick(velocity: wp.array(dtype=wp.vec3), height: wp.array(dtype=float),
     coefficient = dt
     if damping*dt > 1.e-5: coefficient = (1.-decay)/damping
     velocity[i] = value*decay+acceleration*coefficient
+
+
+@wp.kernel
+def field_wetness(thickness: wp.array(dtype=float), pinned: wp.array(dtype=int), wetness: wp.array(dtype=float),
+                  dt: float, deposit_rate: float, drying: float):
+    # Like surface.wetness_step, but a held contact line has not advanced over its node yet.
+    i = wp.tid()
+    if pinned[i] != 0: return
+    value = wetness[i]
+    if thickness[i] > 1.e-5:
+        value = 1.-(1.-value)*wp.exp(-deposit_rate*dt)
+    else:
+        value *= wp.exp(-drying*dt)
+    wetness[i] = wp.clamp(value,0.,1.)
 
 
 @wp.kernel
@@ -289,11 +315,10 @@ def evolve_field(prepared, buffers: FieldBuffers, config, dt: float, *, use_grap
     if use_graph:
         key = (needed,dt,config.gravity,config.surface_tension,config.repulsion_acceleration,
                config.cohesion_acceleration,config.resistance,config.surface_damping,
-               config.field_viscosity,config.wetness_deposit_rate,config.wetness_drying_rate)
+               config.field_viscosity,config.wetness_deposit_rate,config.wetness_drying_rate,
+               config.contact_hysteresis)
         graph = buffers.graphs.get(key)
         if graph is None:
-            from .surface import wetness_step
-            wp.load_module(module=wetness_step.module,device=buffers.device)
             if len(buffers.graphs) >= 8:
                 wp.synchronize_device(buffers.device)
                 buffers.graphs.clear()
@@ -320,7 +345,9 @@ def _evolve_kernels(chart, buffers, config, needed, dt):
         wp.launch(field_kick,len(chart.vertices),inputs=[buffers.velocity,buffers.thickness,chart.normals_gpu,
             buffers.pressure_gradient,buffers.capillary_gradient,wp.vec3(*config.gravity),config.surface_tension,
             config.repulsion_acceleration,config.cohesion_acceleration,config.resistance+config.surface_damping,
-            config.field_viscosity,interval,buffers.force_limited],device=buffers.device)
+            config.field_viscosity,interval,buffers.wetness,
+            config.surface_tension/1000.*config.contact_hysteresis/chart.operator_spacing,
+            buffers.pinned,buffers.force_limited],device=buffers.device)
         if config.field_viscosity > 0:
             wp.copy(buffers.rhs,buffers.velocity)
             for iteration in range(8):
@@ -328,8 +355,7 @@ def _evolve_kernels(chart, buffers, config, needed, dt):
                     chart.areas_gpu,chart.offsets_gpu,chart.neighbors_gpu,chart.neighbor_weights_gpu,chart.normals_gpu,
                     config.field_viscosity*interval,buffers.velocity_temp],device=buffers.device)
                 buffers.velocity,buffers.velocity_temp = buffers.velocity_temp,buffers.velocity
-    from .surface import wetness_step
-    wp.launch(wetness_step,len(chart.vertices),inputs=[buffers.thickness,buffers.wetness,dt,
+    wp.launch(field_wetness,len(chart.vertices),inputs=[buffers.thickness,buffers.pinned,buffers.wetness,dt,
         config.wetness_deposit_rate,config.wetness_drying_rate],device=buffers.device)
 
 

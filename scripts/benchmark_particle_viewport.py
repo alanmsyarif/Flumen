@@ -119,6 +119,7 @@ def main():
     parser.add_argument('--style',choices=['POINTS','WATER'],default='POINTS')
     parser.add_argument('--water-smoothing',type=float,default=.003)
     parser.add_argument('--water-scale',type=float,default=3.)
+    parser.add_argument('--contact-hysteresis',type=float,default=0.)
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     bpy.context.preferences.view.show_splash=False

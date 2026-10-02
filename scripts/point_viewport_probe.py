@@ -39,7 +39,7 @@ def build(args):
     s=host.flumen_gpu; n=args.count
     for name,value in dict(solver_backend='FIELD',capacity=n,initial_coating_count=n,particles_per_frame=0,
             source_start=0,source_softness=0,radius=.0001,time_scale=.5,lifetime=1000,kill_height=-10000,
-            resistance=60,field_spacing=.002,contact_spacing=.002,resample_target=n,minimum_substeps=8,
+            resistance=60,contact_hysteresis=getattr(args,'contact_hysteresis',0.),field_spacing=.002,contact_spacing=.002,resample_target=n,minimum_substeps=8,
             point_size=args.point_size,point_style=args.style,water_smoothing=args.water_smoothing,
             water_radius_scale=args.water_scale).items():
         setattr(s,name,value)

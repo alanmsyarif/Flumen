@@ -65,6 +65,7 @@ class FlowConfig:
     contact_spacing: float = .002
     field_viscosity: float = 1.e-6
     surface_tension: float = .072
+    contact_hysteresis: float = 0.   # cos(receding)-cos(advancing): dry surface pins thin film fronts
     resample_target: int = 0
 
     def validate(self) -> None:
@@ -104,7 +105,7 @@ class FlowConfig:
             ('maximum_merged_radius_scale',1.,8.), ('reconstruction_scale',.5,4.),
             ('wetness_deposit_rate',0.,1000.), ('wetness_drying_rate',0.,1000.),
             ('field_spacing',.00005,.02), ('contact_spacing',.00005,.05),
-            ('field_viscosity',0.,.01), ('surface_tension',0.,1.),
+            ('field_viscosity',0.,.01), ('surface_tension',0.,1.), ('contact_hysteresis',0.,2.),
         ):
             value = getattr(self, name)
             if not isfinite(value) or not low <= value <= high:
