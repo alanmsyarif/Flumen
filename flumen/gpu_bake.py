@@ -171,6 +171,8 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
                                           description='Volume-conserving smoothing steps on film thickness')
     film_max_thickness: bpy.props.FloatProperty(name='Film Max Thickness',default=.002,min=0.,max=.02,subtype='DISTANCE',
                                                 description='Thicker pooled water becomes pendant drops; 0 disables')
+    film_sheen: bpy.props.FloatProperty(name='Wet Sheen',default=2e-5,min=0.,max=.001,subtype='DISTANCE',precision=5,
+                                        description='Cosmetic thin coat where water has passed (cached wetness); 0 disables')
     drop_kernel: bpy.props.EnumProperty(name='Drop Shape',default='PCA',items=[
         ('PCA','Neighbour (PCA)','Stretch drops along neighbouring water (streams); isolated drops stay round'),
         ('VELOCITY','Velocity','Stretch drops along their motion')])
@@ -198,7 +200,8 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
         try:
             self._reader=CacheReader(host['sf_particle_cache'])
             self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing,film_spacing=self.film_spacing,film_smoothing=self.film_smoothing,
-                                    film_max_thickness=self.film_max_thickness,drop_kernel=self.drop_kernel.lower()),self._path)
+                                    film_max_thickness=self.film_max_thickness,drop_kernel=self.drop_kernel.lower(),
+                                    film_sheen=self.film_sheen),self._path)
         except (ValueError,OSError) as exc:
             self.report({'ERROR'},str(exc)); return {'CANCELLED'}
         self._host=host; self._done=0

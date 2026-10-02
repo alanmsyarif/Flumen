@@ -79,6 +79,7 @@ def main():
     parser.add_argument('--film-smoothing',type=int,default=20)
     parser.add_argument('--film-max-thickness',type=float,default=.002)
     parser.add_argument('--drop-kernel',choices=['velocity','pca'],default='pca')
+    parser.add_argument('--film-sheen',type=float,default=2e-5)
     parser.add_argument('--free-crop',type=float,nargs=6,default=[-.3,-.3,-.02,.3,.3,.4],
                         help='Mesh free drops only inside x0 y0 z0 x1 y1 z1 (meters); out-of-shot drops are reported')
     parser.add_argument('--workers',type=int,default=max(1,min(12,(os.cpu_count() or 2)//2)))
@@ -96,7 +97,7 @@ def main():
     source=host.flumen_gpu.source
     report=dict(measurement_kind='offline_clip',particles=args.count,frames=args.frames,particle_radius=radius,water_scale=args.water_scale,
                 drop_spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing,free_crop=args.free_crop,
-                film_max_thickness=args.film_max_thickness,drop_kernel=args.drop_kernel)
+                film_max_thickness=args.film_max_thickness,drop_kernel=args.drop_kernel,film_sheen=args.film_sheen)
     if args.reuse_cache:
         cached=CacheReader(args.work/'cache')
         if cached.header.frame_count!=args.frames: raise ValueError('Existing cache has a different frame range')
@@ -110,7 +111,7 @@ def main():
     report['workers']=args.workers
     for result in iter_mesh_cache(reader,MeshOptions(spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing,
                                                free_crop=(tuple(args.free_crop[:3]),tuple(args.free_crop[3:])),
-                                               film_max_thickness=args.film_max_thickness,drop_kernel=args.drop_kernel),args.work/'mesh',args.workers):
+                                               film_max_thickness=args.film_max_thickness,drop_kernel=args.drop_kernel,film_sheen=args.film_sheen),args.work/'mesh',args.workers):
         frames.append(result)
         if result['frame'] in STILLS: print('MESHED',json.dumps({k:result[k] for k in ('frame','seconds','attached_triangles','free_triangles')}),flush=True)
     report.update(mesh_seconds=time.perf_counter()-t,mesh_bytes=folder_bytes(args.work/'mesh'),mesh_frames=frames)

@@ -39,11 +39,12 @@ class MeshOptions:
     max_triangles: int = 20_000_000
     film_smoothing: int = 0        # volume-conserving diffusion steps on deposited film thickness
     film_max_thickness: float = 0. # 0: off. Water above it at a node becomes a pendant drop (volume moves, not lost)
+    film_sheen: float = 0.         # cosmetic: minimum film thickness x cached wetness where water has passed (reported)
     free_crop: tuple = None        # ((x, y, z) low, (x, y, z) high): free drops outside are skipped and reported
     drop_kernel: str = 'velocity'  # 'velocity': stretch along motion; 'pca': Yu & Turk neighbour anisotropy
 
     def __post_init__(self):
-        for value in (self.spacing, self.film_spacing, self.min_thickness, self.film_max_thickness):
+        for value in (self.spacing, self.film_spacing, self.min_thickness, self.film_max_thickness, self.film_sheen):
             if not isfinite(value) or value < 0: raise ValueError('Mesh distances must be finite and nonnegative')
         if self.spacing <= 0: raise ValueError('Mesh spacing must be positive')
         if not 1 <= self.tile_cells <= 32: raise ValueError('Tiles hold 1 to 32 cells per axis')
@@ -120,6 +121,11 @@ def film_lattice(static, options):
     count = int(node.max())+1
     positions = np.zeros((count, 3))
     positions[node.ravel()] = (V[C]+(i/n)[:, None]*(V[A]-V[C])+(j/n)[:, None]*(V[B]-V[C]))
+    # Each node's anchor in the cached chart, for sampling per-frame wetness.
+    node_face = np.empty(count, np.int64); node_bary = np.empty((count, 2))
+    node_face[node.ravel()] = face; node_bary[node.ravel()] = np.stack([i/n, j/n], 1)
+    child, wet_weights = chart_anchor(node_face, node_bary, int(static['chart_level'][0]))
+    wet_nodes = static['chart_triangles'][child]
     tris = node[:, small].reshape(-1, 3)
     cross = np.cross(V[T[:, 0]]-V[T[:, 2]], V[T[:, 1]]-V[T[:, 2]])
     small_area = np.repeat(np.linalg.norm(cross, axis=1)*.5/(n*n), len(small))
@@ -129,6 +135,7 @@ def film_lattice(static, options):
     normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-30)
     edges = np.unique(np.sort(np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]), axis=1), axis=0)
     return dict(n=n, F=F, local=local, node=node, count=count, positions=positions, normals=normals, edges=edges,
+                wet_nodes=wet_nodes, wet_weights=wet_weights,
                 node_area=node_area, tris=tris, max_spacing=float(lengths.max())/n, film_spacing=spacing)
 
 
@@ -165,15 +172,22 @@ def _film(static, cached, options, lattice=None):
         pooled_volumes = excess[pooled]
         drop_radius = np.cbrt(pooled_volumes*.238732414637843)
         pooled_positions = lattice['positions'][pooled]+lattice['normals'][pooled]*(options.film_max_thickness+drop_radius)[:, None]
-    thickness = volume/area
     represented = float(volume.sum())
+    sheen = np.zeros(count)
+    if options.film_sheen > 0.:
+        # Cosmetic coat: wetted surface keeps a thin continuous layer after the water drains.
+        wet = (lattice['wet_weights']*cached.wetness[lattice['wet_nodes']]).sum(1)
+        sheen = np.maximum(options.film_sheen*wet*area-volume, 0.)
+        volume = volume+sheen
+    thickness = volume/area
     mesh = _film_shell(lattice['positions'], lattice['normals'], thickness, lattice['tris'],
                        options.min_thickness, options.max_triangles)
     mesh_volume = _signed_volume(mesh.vertices, mesh.triangles)
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
-        excluded_volume=max(0., represented-mesh_volume), film_segments=n, film_nodes=count,
+        excluded_volume=max(0., represented+float(sheen.sum())-mesh_volume), film_segments=n, film_nodes=count,
         dry_nodes=int((thickness < options.min_thickness).sum()),
         pooled_volume=float(pooled_volumes.sum()), pooled_positions=pooled_positions, pooled_volumes=pooled_volumes,
+        sheen_volume=float(sheen.sum()),
         film_max_spacing=lattice['max_spacing'],
         unanchored_volume=float(arrays['volume'][(arrays['state'] == 0) & ~attached].astype(np.float64).sum()))
     return mesh
@@ -577,6 +591,7 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
         attached_represented_volume=film.diagnostics['represented_volume'],
         attached_mesh_volume=film.diagnostics['mesh_volume'], attached_excluded_volume=film.diagnostics['excluded_volume'],
         unanchored_volume=film.diagnostics['unanchored_volume'], pooled_volume=film.diagnostics['pooled_volume'],
+        sheen_volume=film.diagnostics['sheen_volume'],
         free_volume=stats.get('free_volume', 0.), free_mesh_volume=free_volume,
         subresolution_volume=stats.get('subresolution_volume', 0.), cropped_volume=stats.get('cropped_volume', 0.),
         tiles=stats.get('tiles', 0),

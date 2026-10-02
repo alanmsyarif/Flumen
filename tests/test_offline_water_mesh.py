@@ -239,3 +239,19 @@ def test_film_cap_turns_pooled_water_into_a_pendant_drop(tmp_path):
     assert capped['pooled_volume'] > 0
     total = capped['attached_represented_volume']+capped['pooled_volume']
     assert abs(total-spike['attached_represented_volume']) <= 1e-9*total  # volume moved, not lost
+
+
+def test_film_sheen_keeps_wetted_surface_coated(tmp_path):
+    # No particles left, but the whole square was wetted: a sheen keeps a thin continuous coat.
+    reader = write_cache(tmp_path/'wet', *SQUARE, [0, 0], [], wetness=[1., 1., 1., 1.])
+    bare = mesh_cached_frame(reader, 1, MeshOptions(spacing=.001), tmp_path/'bare', lambda: False)
+    sheen = mesh_cached_frame(reader, 1, MeshOptions(spacing=.001, film_sheen=2e-5), tmp_path/'sheen', lambda: False)
+    assert bare['attached_triangles'] == 0 and bare['sheen_volume'] == 0
+    mesh = np.load(tmp_path/'sheen'/sheen['file'])
+    assert closed(mesh['attached_triangles']) and components(mesh['attached_triangles']) == 1
+    assert sheen['sheen_volume'] == pytest.approx(1e-4*2e-5, rel=1e-3)          # area x sheen, all cosmetic
+    assert sheen['attached_represented_volume'] == 0                            # no particle water claimed
+    # Half-wet surface: only the wetted half gets a coat.
+    half = write_cache(tmp_path/'half', *SQUARE, [0, 0], [], wetness=[1., 0., 1., 0.])
+    part = mesh_cached_frame(half, 1, MeshOptions(spacing=.001, film_sheen=2e-5), tmp_path/'part', lambda: False)
+    assert np.load(tmp_path/'part'/part['file'])['attached_vertices'][:, 0].max() < .01
