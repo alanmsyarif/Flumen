@@ -4,6 +4,7 @@ import bpy
 
 _RECORDS = {}
 _HANDLER = None
+_WATER = None   # ScreenWater, created on first Water-style draw (needs a GPU context)
 
 
 class _Record:
@@ -69,7 +70,8 @@ def _release(key):
 
 
 def _remove_handler():
-    global _HANDLER
+    global _HANDLER, _WATER
+    _WATER = None
     if _HANDLER is not None:
         try: bpy.types.SpaceView3D.draw_handler_remove(_HANDLER,'WINDOW')
         finally: _HANDLER = None
@@ -82,15 +84,30 @@ def _redraw():
             if area.type == 'VIEW_3D': area.tag_redraw()
 
 
-def _upload(record):
+def _upload(record, style):
     import gpu
     batch = record.batch
+    record.uploaded = (batch, style)
+    if style == 'WATER':
+        from .gpu_water_screen import ScreenWater
+        record.gpu_batch = ScreenWater.batch(batch.xyzr)   # contiguous xyz+radius rows, no copy
+        return
     fmt = gpu.types.GPUVertFormat()
     fmt.attr_add(id='pos',comp_type='F32',len=3,fetch_mode='FLOAT')
     buffer = gpu.types.GPUVertBuf(fmt,batch.displayed_count)
     buffer.attr_fill('pos',batch.xyzr[:,:3])  # strided view: no host-side copy
     record.gpu_batch = gpu.types.GPUBatch(type='POINTS',buf=buffer)
-    record.uploaded = batch
+
+
+def _solver(host):
+    from .gpu_runtime import RUNTIMES
+    runtime = RUNTIMES.get(host.as_pointer())
+    return runtime.solver if runtime else None
+
+
+def ScreenWater_occluder(source):
+    from .gpu_water_screen import ScreenWater
+    return ScreenWater.occluder(source.vertices_cpu, source.triangles_cpu)
 
 
 def _stats(host):
@@ -101,6 +118,7 @@ def _stats(host):
 
 def _draw():
     import gpu
+    global _WATER
     region = bpy.context.region_data
     clipped = bool(region and region.use_clip_planes)
     shader = gpu.shader.from_builtin('POINT_UNIFORM_COLOR',config='CLIPPED' if clipped else 'DEFAULT')
@@ -113,12 +131,26 @@ def _draw():
         batch = record.batch
         if not visible or batch is None or batch.displayed_count == 0: continue
         stats = _stats(host)
-        if record.uploaded is not batch:
-            start = perf_counter(); _upload(record)
+        settings = host.flumen_gpu
+        style = settings.point_style
+        if record.uploaded is None or record.uploaded[0] is not batch or record.uploaded[1] != style:
+            start = perf_counter(); _upload(record, style)
             if stats is not None: stats.upload_ms = (perf_counter()-start)*1000
         start = perf_counter()
-        settings = host.flumen_gpu
         depth_mask = gpu.state.depth_mask_get()
+        if style == 'WATER':
+            try:
+                if _WATER is None:
+                    from .gpu_water_screen import ScreenWater
+                    _WATER = ScreenWater()
+                solver = _solver(host)
+                if solver is not None and getattr(record, 'occluder_source', None) is not solver.source:
+                    record.occluder = ScreenWater_occluder(solver.source); record.occluder_source = solver.source
+                _WATER.draw(record.gpu_batch, settings, getattr(record, 'occluder', None))
+            finally:
+                gpu.state.depth_mask_set(depth_mask); gpu.state.depth_test_set('NONE'); gpu.state.blend_set('NONE')
+            if stats is not None: stats.draw_ms = (perf_counter()-start)*1000
+            continue
         try:
             shader.bind()
             shader.uniform_float('color',tuple(settings.point_color))

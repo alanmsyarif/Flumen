@@ -40,7 +40,8 @@ def build(args):
     for name,value in dict(solver_backend='FIELD',capacity=n,initial_coating_count=n,particles_per_frame=0,
             source_start=0,source_softness=0,radius=.0001,time_scale=.5,lifetime=1000,kill_height=-10000,
             resistance=60,field_spacing=.002,contact_spacing=.002,resample_target=n,minimum_substeps=8,
-            point_size=args.point_size).items():
+            point_size=args.point_size,point_style=args.style,water_smoothing=args.water_smoothing,
+            water_radius_scale=args.water_scale).items():
         setattr(s,name,value)
     runtime.reset_host(host)
     return scene,host
@@ -108,7 +109,7 @@ class Probe:
         self.finish(report=dict(measurement_kind='short_viewport_probe',acceptance_gate=False,
             viewport=(1920,1080),shading='SOLID',backend=gpu.platform.backend_type_get(),
             gpu=gpu.platform.renderer_get(),warmup_frames=self.args.warmup,
-            point_size=self.args.point_size,live_count=last['live_count'],displayed_count=last['displayed_count'],
+            point_size=self.args.point_size,style=self.args.style,live_count=last['live_count'],displayed_count=last['displayed_count'],
             mean_frame_ms=statistics.mean(frame_ms),median_frame_ms=statistics.median(frame_ms),
             p95_frame_ms=frame_ms[max(0,int(len(frame_ms)*.95+.999)-1)],fps=1000/statistics.mean(frame_ms),
             median_update_ms=statistics.median(s['update_ms'] for s in samples),
@@ -137,6 +138,9 @@ def main():
     parser.add_argument('--frames',type=int,default=30)
     parser.add_argument('--warmup',type=int,default=3)
     parser.add_argument('--point-size',type=float,default=2.)
+    parser.add_argument('--style',choices=['POINTS','WATER'],default='POINTS')
+    parser.add_argument('--water-smoothing',type=float,default=.003)
+    parser.add_argument('--water-scale',type=float,default=3.)
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     bpy.context.preferences.view.show_splash=False

@@ -27,6 +27,14 @@ class SF_GPUSettings(bpy.types.PropertyGroup):
     point_size: bpy.props.FloatProperty(name='Point Size',default=2.,min=1.,max=16.,subtype='PIXEL',update=points_changed)
     point_color: bpy.props.FloatVectorProperty(name='Point Color',size=4,subtype='COLOR',min=0.,max=1.,
                                                default=(.1,.5,1.,1.),update=points_changed)
+    point_style: bpy.props.EnumProperty(name='Preview Style',default='POINTS',update=points_changed,
+        items=[('POINTS','Points','Flat GPU points (fastest)'),('WATER','Water','Screen-space smoothed water surface (viewport only)')])
+    water_color: bpy.props.FloatVectorProperty(name='Water Color',size=4,subtype='COLOR',min=0.,max=1.,
+                                               default=(.45,.62,.8,.85),update=points_changed)
+    water_smoothing: bpy.props.FloatProperty(name='Water Smoothing',default=.003,min=0.,max=.01,subtype='DISTANCE',
+                                             update=points_changed,description='World-space width of the depth filter')
+    water_radius_scale: bpy.props.FloatProperty(name='Water Sprite Scale',default=3.,min=1.,max=6.,update=points_changed,
+                                                description='Sprite radius relative to particle radius, so neighbours overlap')
     display_limit: bpy.props.IntProperty(name='Display Limit',description='Points drawn; 0 draws all',
                                          default=0,min=0,max=1000000,update=points_changed)
 

@@ -73,3 +73,17 @@ class GPUPointTests(unittest.TestCase):
         self.assertFalse(self.display.handler_installed())
         self.assertEqual(self.display.owned_hosts(),set())
         runtime.register_handlers()
+
+    def test_water_style_is_display_only(self):
+        host=self.host(); self.scene.frame_set(2)
+        solver=runtime.get_runtime(host,self.scene)
+        before=(solver.stats.accepted,solver.stats.live_count,solver.current_frame)
+        settings=host.flumen_gpu
+        self.assertEqual(settings.point_style,'POINTS')
+        settings.point_style='WATER'; settings.water_smoothing=.002; settings.water_radius_scale=3.
+        settings.water_color=(.2,.4,.6,.8)
+        self.scene.frame_set(2)
+        self.assertIs(runtime.get_runtime(host,self.scene),solver)
+        self.assertEqual((solver.stats.accepted,solver.stats.live_count,solver.current_frame),before)
+        self.assertEqual(host.get('sf_gpu_error',''),'')
+        self.assertEqual(self.display.published_batch(host).displayed_count,solver.stats.live_count)

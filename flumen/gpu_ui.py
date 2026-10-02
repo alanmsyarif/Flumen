@@ -34,7 +34,10 @@ class SF_PT_gpu(bpy.types.Panel):
             box.label(text=geometry_error,icon='ERROR')
         layout.prop(settings,'display_mode')
         if settings.display_mode=='POINTS':
-            for name in ('solver_backend','point_size','point_color','display_limit'):
+            for name in ('solver_backend','point_style','display_limit'):
+                layout.prop(settings,name)
+            for name in (('water_color','water_smoothing','water_radius_scale') if settings.point_style=='WATER'
+                         else ('point_size','point_color')):
                 layout.prop(settings,name)
         if settings.solver_backend=='FIELD':
             for name in ('field_spacing','contact_spacing','field_viscosity','surface_tension','resample_target'):
