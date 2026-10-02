@@ -25,6 +25,15 @@ class ParticleArrays:
 
 
 @dataclass
+class PointBatch:
+    """Packed xyz + radius rows. xyzr views pinned memory reused by the next point snapshot."""
+    xyzr: np.ndarray
+    live_count: int
+    displayed_count: int
+    frame: int | None
+
+
+@dataclass
 class DisplayBatch:
     positions: np.ndarray
     radii: np.ndarray
@@ -126,15 +135,11 @@ class ParticlePool:
         self.summary_blocks = wp.zeros(((self.capacity+255)//256,4),dtype=wp.float64,device=self.device)
         self.read_count = wp.zeros(1,dtype=int,device=self.device)
         self.display = wp.zeros(self.capacity,dtype=wp.vec4,device=self.device)
-        self.display_ids = wp.zeros(self.capacity,dtype=wp.int64,device=self.device)
         self.host_display = wp.zeros(self.capacity,dtype=wp.vec4,device='cpu',pinned=True)
-        self.host_ids = wp.zeros(self.capacity,dtype=wp.int64,device='cpu',pinned=True)
+        # Full snapshots allocate identifiers/auxiliary fields on first use only.
+        self.display_ids = self.host_ids = None
         self.display_aux={}
         self.host_aux={}
-        for name,dtype in [('normals',wp.vec3),('velocities',wp.vec3),('volumes',float),
-                           ('states',int),('faces',int),('islands',int)]:
-            self.display_aux[name]=wp.zeros(self.capacity,dtype=dtype,device=self.device)
-            self.host_aux[name]=wp.zeros(self.capacity,dtype=dtype,device='cpu',pinned=True)
         self.next_id = 0
         self.substeps = 0
         self.field_motion = self.field_aggregate = None
@@ -212,7 +217,53 @@ def read_stats(pool, frame) -> FrameStats:
     return stats
 
 
+def _snapshot_buffers(pool):
+    if pool.display_ids is not None: return
+    pool.display_ids = wp.zeros(pool.capacity,dtype=wp.int64,device=pool.device)
+    pool.host_ids = wp.zeros(pool.capacity,dtype=wp.int64,device='cpu',pinned=True)
+    for name,dtype in [('normals',wp.vec3),('velocities',wp.vec3),('volumes',float),
+                       ('states',int),('faces',int),('islands',int)]:
+        pool.display_aux[name]=wp.zeros(pool.capacity,dtype=dtype,device=pool.device)
+        pool.host_aux[name]=wp.zeros(pool.capacity,dtype=dtype,device='cpu',pinned=True)
+
+
+@wp.kernel
+def active_count(active: wp.array(dtype=int), prefix: wp.array(dtype=int), count: wp.array(dtype=int)):
+    last=active.shape[0]-1; count[0]=prefix[last]+active[last]
+
+
+@wp.kernel
+def gather_points(d: ParticleArrays, prefix: wp.array(dtype=int), live: int, limit: int,
+                  display: wp.array(dtype=wp.vec4)):
+    i=wp.tid()
+    if d.active[i] != 1: return
+    # Even rank stride: exactly `limit` rows, identical for identical state.
+    rank=wp.int64(prefix[i]); row=rank
+    if limit < live:
+        row=rank*wp.int64(limit)//wp.int64(live)
+        if (rank+wp.int64(1))*wp.int64(limit)//wp.int64(live) == row: return
+    radius=wp.pow(d.volume[i]*0.238732414637843,1.0/3.0)
+    p=d.position[i]
+    if d.state[i] == 0: p+=d.normal[i]*radius
+    display[int(row)]=wp.vec4(p[0],p[1],p[2],radius)
+
+
+def point_snapshot(pool, limit=None, frame=None) -> PointBatch:
+    if limit is not None and (isinstance(limit,bool) or not isinstance(limit,int) or limit < 1):
+        raise ValueError('Point display limit must be a positive integer or None')
+    array_scan(pool.data.active,pool.prefix,inclusive=False)
+    wp.launch(active_count,1,inputs=[pool.data.active,pool.prefix,pool.read_count],device=pool.device)
+    live=int(pool.read_count.numpy()[0])
+    shown=live if limit is None else min(limit,live)
+    if shown:
+        wp.launch(gather_points,pool.capacity,inputs=[pool.data,pool.prefix,live,shown,pool.display],device=pool.device)
+        wp.copy(pool.host_display,pool.display,count=shown)
+        wp.synchronize_device(pool.device)
+    return PointBatch(pool.host_display.numpy()[:shown],live,shown,frame)
+
+
 def snapshot(pool) -> DisplayBatch:
+    _snapshot_buffers(pool)
     array_scan(pool.data.active,pool.prefix,inclusive=False)
     wp.launch(gather_kernel,pool.capacity,inputs=[pool.data,pool.prefix,pool.display,
               pool.display_ids,pool.read_count,*pool.display_aux.values()],device=pool.device)

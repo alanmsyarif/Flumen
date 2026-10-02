@@ -2,7 +2,7 @@
 from time import perf_counter
 import warp as wp
 from .config import frame_dt
-from .state import ParticlePool, read_stats, snapshot
+from .state import ParticlePool, read_stats, snapshot, point_snapshot
 from .emission import emit, emit_batch
 from .motion import advance, advance_coupled
 
@@ -167,6 +167,17 @@ class FlowSolver:
         self.pool.transfer_ms = (perf_counter()-start)*1000
         if self.stats is not None:
             self.stats.transfer_ms = self.pool.transfer_ms
+        return batch
+
+    def point_snapshot(self, limit=None):
+        """Read-only xyz+radius stream; never seeks, emits or deposits."""
+        if self.pool is None:
+            raise RuntimeError('GPU runtime is closed')
+        start = perf_counter()
+        batch = point_snapshot(self.pool,limit,self.current_frame)
+        if self.stats is not None:
+            self.stats.readback_ms = (perf_counter()-start)*1000
+            self.stats.displayed_count = batch.displayed_count
         return batch
 
     def reset(self):

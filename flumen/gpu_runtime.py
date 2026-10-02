@@ -7,6 +7,8 @@ from hashlib import sha256
 from uuid import uuid4
 from .gpu_properties import config_for
 from .gpu_display import create_display, update_display, set_material
+from .gpu_point_display import (create_point_display, update_point_display, release_point_display,
+                                purge_point_displays, release_all_point_displays)
 
 RUNTIMES = {}
 _BUSY = False
@@ -50,6 +52,7 @@ def purge_deleted():
     for key in list(RUNTIMES):
         if key not in alive:
             RUNTIMES.pop(key).solver.close()
+    purge_point_displays(alive)
     from .gpu_water_display import purge_orphan_water_displays
     purge_orphan_water_displays()
 
@@ -79,7 +82,9 @@ def get_runtime(host,scene):
         host['sf_gpu_uid']=str(uuid4())
         host['sf_gpu_device']=device.name
         host['sf_gpu_error']=''
-        if signature[0].display_mode=='CONNECTED':
+        mode=signature[0].display_mode
+        if mode!='POINTS': release_point_display(host)
+        if mode=='CONNECTED':
             from .gpu_water_display import create_water_display
             create_water_display(host,solver.topology)
         else:
@@ -87,14 +92,23 @@ def get_runtime(host,scene):
             release_water_display(host)
             host['sf_gpu_water_display']=False
             host['sf_gpu_geometry_error']=''
-            if not any(m.type=='NODES' and m.node_group and m.node_group.get('sf_gpu_display') for m in host.modifiers):
-                create_display(host)
+            drops=[m for m in host.modifiers if m.type=='NODES' and m.node_group and m.node_group.get('sf_gpu_display')]
+            if mode=='POINTS':
+                # Points draw from GPU batches: no mesh vertices or sphere instances.
+                if host.data.users>1: host.data=host.data.copy()
+                if len(host.data.vertices): host.data.clear_geometry()
+                for modifier in drops: modifier.show_viewport=False
+                create_point_display(host)
+            else:
+                for modifier in drops: modifier.show_viewport=True
+                if not drops: create_display(host)
         set_material(host,host.flumen_gpu.material)
         RUNTIMES[key]=HostRuntime(host,solver,signature,_fingerprint(arrays))
         return solver
     except Exception:
         from .gpu_water_display import release_water_display
         release_water_display(host)
+        release_point_display(host)
         if solver is not None: solver.close()
         else: source.close()
         raise
@@ -122,11 +136,20 @@ def evaluate_host(host,scene,frame=None):
             start=perf_counter()
             update_water_display(host,geometry,fields)
             stats.display_update_ms=(perf_counter()-start)*1000
+        elif solver.config.display_mode=='POINTS':
+            update_point_display(host,solver.point_snapshot(host.flumen_gpu.display_limit or None))
         else:
             update_display(host,solver.snapshot())
         return stats
     finally:
         _BUSY=False
+
+
+def refresh_points(host):
+    """Republish the current frame after a display-only change; physics is untouched."""
+    record=RUNTIMES.get(host.as_pointer())
+    if _BUSY or record is None or record.solver.config.display_mode!='POINTS': return
+    update_point_display(host,record.solver.point_snapshot(host.flumen_gpu.display_limit or None))
 
 
 def reset_host(host):
@@ -144,7 +167,7 @@ def create_gpu_host(source,scene,display_mode='DROPS'):
     global _BUSY
     if source is None or source.type!='MESH' or source.get('sf_gpu_host') or source.get('sf_simulation_host'):
         raise ValueError('Select a stationary collision mesh')
-    if display_mode not in ('DROPS','CONNECTED'):
+    if display_mode not in ('DROPS','CONNECTED','POINTS'):
         raise ValueError('Unknown water display mode')
     from .gpu.device import require_cuda
     require_cuda()
@@ -171,6 +194,7 @@ def create_gpu_host(source,scene,display_mode='DROPS'):
         if record: record.solver.close()
         from .gpu_water_display import release_water_display
         release_water_display(host)
+        release_point_display(host)
         material=host.flumen_gpu.material
         trees=[m.node_group for m in host.modifiers if m.type=='NODES']
         bpy.data.objects.remove(host,do_unlink=True)
@@ -189,6 +213,7 @@ def release_all():
         try: release_water_display(record.host)
         except ReferenceError: pass
     RUNTIMES.clear()
+    release_all_point_displays()
     purge_orphan_water_displays()
 
 

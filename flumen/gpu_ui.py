@@ -27,6 +27,9 @@ class SF_PT_gpu(bpy.types.Panel):
             box=layout.box(); box.alert=True
             box.label(text=geometry_error,icon='ERROR')
         layout.prop(settings,'display_mode')
+        if settings.display_mode=='POINTS':
+            for name in ('solver_backend','point_size','point_color','display_limit'):
+                layout.prop(settings,name)
         layout.prop(settings,'interactions_enabled')
         for name in ('mode','particles_per_frame' if settings.mode=='CONTINUOUS' else 'burst_count',
                      'emission_start','emission_end','initial_coating_count','time_scale','capacity','lifetime','seed','radius',
@@ -47,6 +50,9 @@ class SF_PT_gpu(bpy.types.Panel):
             layout.label(text=f'{s.capacity_rejected:,} capacity / {s.source_rejected:,} source rejected')
             layout.label(text=f'{s.solver_ms:.2f} ms solver • {s.transfer_ms:.2f} ms transfer')
             layout.label(text=f'{s.substeps} substeps • {s.limited_count} limited')
+            if settings.display_mode=='POINTS':
+                layout.label(text=f'{s.live_count:,} simulated • {s.displayed_count:,} displayed')
+                layout.label(text=f'{s.readback_ms:.2f} readback • {s.upload_ms:.2f} upload • {s.draw_ms:.2f} draw ms')
             if settings.display_mode=='CONNECTED':
                 layout.label(text=f'{s.water_vertices:,} water vertices / {s.water_triangles:,} triangles')
                 layout.label(text=f'{s.reconstruction_ms:.2f} ms reconstruction')

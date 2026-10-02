@@ -76,8 +76,15 @@ ruling, fallback now runs in repeated 65536-entry chunks. The run passes at
 41.5 FPS solver-only (p95 25.4 ms) with 170k fallback particles by the end.
 A free-merge regression with opposing and zero normals stays finite.
 
-None of these runs draws particles. The 120+600 full-count viewport gate has not
-run. Suites: 68 Python, 75 CUDA and 61 Blender tests pass. Resume steps are in
+The solver runs above do not draw. A short actual
+[1080p point probe](../artifacts/point-viewport-probe.json)
+([screenshot](../artifacts/point-viewport-probe.png)) runs the attached fixture in
+Blender's GUI (OpenGL, solid shading, 2 px points): one million simulated and
+one million drawn points at 30.6 FPS (median frame 32.6 ms, p95 34.3 ms) over
+30 frames after 3 warmup frames. Medians: solver 19.8, point readback 1.5,
+VBO upload 2.1, draw submit 2.4 and whole redraw 10.1 ms. Copies cost about
+3.6 ms, so CUDA/graphics interop is not justified; the solver dominates. This
+short probe is not the 120+600 full-count viewport gate, which has not run. Suites: 68 Python, 75 CUDA and 61 Blender tests pass. Resume steps are in
 the [checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md).
 
 ## Fixture and reproduction

@@ -15,9 +15,20 @@ def material_changed(self, context):
     set_material(self.id_data,self.material)
 
 
+def points_changed(self, context):
+    from .gpu_runtime import refresh_points
+    refresh_points(self.id_data)
+
+
 class SF_GPUSettings(bpy.types.PropertyGroup):
     source: bpy.props.PointerProperty(name='Collision Surface',type=bpy.types.Object,update=changed)
     material: bpy.props.PointerProperty(name='Water Material',type=bpy.types.Material,update=material_changed)
+    # Viewport-only preview settings: outside FlowConfig, so they never invalidate physics.
+    point_size: bpy.props.FloatProperty(name='Point Size',default=2.,min=1.,max=16.,subtype='PIXEL',update=points_changed)
+    point_color: bpy.props.FloatVectorProperty(name='Point Color',size=4,subtype='COLOR',min=0.,max=1.,
+                                               default=(.1,.5,1.,1.),update=points_changed)
+    display_limit: bpy.props.IntProperty(name='Display Limit',description='Points drawn; 0 draws all',
+                                         default=0,min=0,max=1000000,update=points_changed)
 
 
 _bounds = {
