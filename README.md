@@ -1,6 +1,6 @@
 # Flumen
 
-Experimental **Blender 5.2 LTS** surface flow and drips, version 0.0.3.
+Flumen is a Blender add-on that simulates water draining and dripping over 3D surfaces (like water running down a head or a hand). It uses a CUDA particle solver (NVIDIA Warp), shows a live preview of up to a million particles in the viewport, and bakes the result to a cache that it turns into water meshes offline for rendering.
 
 The development branch includes experimental connected water, coating, merging
 and wetness. Its visual reference match and million-particle interactive target
