@@ -83,6 +83,10 @@ class GPUFieldHostTests(unittest.TestCase):
         a=runtime.get_runtime(first,self.scene); b=runtime.get_runtime(second,self.scene)
         self.assertIsNot(a.prepared,b.prepared)
         prepared=a.prepared
+        # The panel's resolution row reports the real (possibly coarsened) chart spacing.
+        self.assertEqual(a.stats.field_effective_spacing,prepared.chart.effective_spacing)
+        self.assertGreater(a.stats.field_effective_spacing,0)
+        self.assertGreaterEqual(a.stats.field_limited_count,0)
         bpy.data.objects.remove(first,do_unlink=True); runtime.purge_deleted()
         self.assertEqual(prepared.references,0)
         self.scene.frame_set(3)

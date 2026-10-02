@@ -42,16 +42,21 @@ class SF_PT_gpu(bpy.types.Panel):
         if settings.solver_backend=='FIELD':
             for name in ('field_spacing','contact_spacing','field_viscosity','surface_tension','contact_hysteresis','resample_target'):
                 layout.prop(settings,name)
-        elif settings.interactions_enabled:
-            layout.label(text='Pairwise backend: bounded neighbors, not for million-particle editing',icon='INFO')
-        layout.prop(settings,'interactions_enabled')
+            for name,label in (('repulsion_acceleration','Pressure Cap'),('cohesion_acceleration','Capillary Cap'),
+                               ('surface_damping',None),('merge_distance_scale',None),('maximum_merged_radius_scale',None),
+                               ('wetness_deposit_rate',None),('wetness_drying_rate',None)):
+                layout.prop(settings,name,**({'text':label} if label else {}))
+        else:
+            if settings.interactions_enabled:
+                layout.label(text='Pairwise backend: bounded neighbors, not for million-particle editing',icon='INFO')
+            layout.prop(settings,'interactions_enabled')
         for name in ('mode','particles_per_frame' if settings.mode=='CONTINUOUS' else 'burst_count',
                      'emission_start','emission_end','initial_coating_count','time_scale','capacity','lifetime','seed','radius',
                      'source_start','source_softness','gravity','resistance','adhesion',
                      'capture_distance','capture_speed','minimum_substeps','max_travel',
                      'normal_turn_limit','kill_height','material'):
             layout.prop(settings,name)
-        if settings.display_mode=='CONNECTED' or settings.interactions_enabled:
+        if settings.solver_backend!='FIELD' and (settings.display_mode=='CONNECTED' or settings.interactions_enabled):
             for name in ('interaction_radius_scale','cohesion_acceleration','repulsion_acceleration',
                          'surface_damping','merge_distance_scale','maximum_merged_radius_scale',
                          'reconstruction_scale','wetness_deposit_rate','wetness_drying_rate'):
@@ -66,12 +71,13 @@ class SF_PT_gpu(bpy.types.Panel):
             layout.label(text=f'{s.substeps} substeps • {s.limited_count} limited')
             prepared=record.solver.prepared
             if prepared is not None:
-                layout.label(text=f'{prepared.chart.operator_spacing*1000:.2f} mm field • '
-                                  f'{prepared.contact.effective_spacing*1000:.2f} mm contact spacing')
+                layout.label(text=f'{prepared.chart.effective_spacing*1000:.2f} mm field ({prepared.chart.coarsening_factor:.1f}x requested) • '
+                                  f'{prepared.contact.effective_spacing*1000:.2f} mm contact')
+                layout.label(text=f'{s.field_limited_count:,} force-cap hits • Courant {s.field_courant:.2f}')
                 layout.label(text=f'{s.contact_fallback_count:,} contact fallback • {s.attached_count:,} attached / {s.free_count:,} free')
             if settings.display_mode=='POINTS':
                 layout.label(text=f'{s.live_count:,} simulated • {s.displayed_count:,} displayed')
-                layout.label(text=f'{s.readback_ms:.2f} readback • {s.upload_ms:.2f} upload • {s.draw_ms:.2f} draw ms')
+                layout.label(text=f'{s.readback_ms:.2f} readback • {s.upload_ms:.2f} upload • {s.draw_ms:.2f} draw submit ms')
             if settings.display_mode=='CONNECTED':
                 layout.label(text=f'{s.water_vertices:,} water vertices / {s.water_triangles:,} triangles')
                 layout.label(text=f'{s.reconstruction_ms:.2f} ms reconstruction')

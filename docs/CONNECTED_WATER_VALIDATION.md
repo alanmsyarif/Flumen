@@ -252,7 +252,12 @@ Suites at that point: 109 Python, 80 CUDA and 74 Blender tests.
   - A full combined clip was started, then stopped during meshing at user request.
     No final clip with these settings exists.
 
-Suites: 112 Python, 81 CUDA and 75 Blender tests pass. The staged 0.0.4 package
+Known churn: resampling splits off 1%-volume children that sit on their donor and
+merge back the next frame (attached gate: about 7M merged and 7M resampled
+events in total). The counts are reported in each gate JSON. The panel's
+"draw submit" time is CPU command submission, not GPU draw time.
+
+Suites: 112 Python, 82 CUDA and 75 Blender tests pass. The staged 0.0.4 package
 passes extension validation and both smoke runners, including FIELD bake,
 cancellation and CUDA-free playback.
 

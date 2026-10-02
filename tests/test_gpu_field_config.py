@@ -35,6 +35,7 @@ def test_physical_and_preparation_keys_separate_static_and_cosmetic_settings():
     from flumen.gpu.config import physical_key, preparation_key
     field = FlowConfig(solver_backend='FIELD', display_mode='POINTS')
     assert physical_key(replace(field, reconstruction_scale=2.)) == physical_key(field)
+    assert physical_key(replace(field, interactions_enabled=True)) == physical_key(field)   # LEGACY-only toggle
     assert physical_key(replace(field, gravity=(0., 0., -1.))) != physical_key(field)
     legacy = FlowConfig()
     assert physical_key(replace(legacy, reconstruction_scale=2.)) != physical_key(legacy)

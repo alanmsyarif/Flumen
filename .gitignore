@@ -5,6 +5,7 @@ __pycache__/
 .gpu-deps/
 .gpu-wheels/
 artifacts/extension-stage-gpu*/
+artifacts/extension-stage-particles*/
 artifacts/flumen-0.0.3*.zip
 artifacts/*.log
 artifacts/flumen-0.0.4*.zip

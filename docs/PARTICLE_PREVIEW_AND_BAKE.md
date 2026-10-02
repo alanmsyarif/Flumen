@@ -5,8 +5,8 @@ water particles live in the viewport on a stationary mesh. You then bake the
 particles to disk and mesh them offline into renderable water. The backend is
 **experimental**. The 1080p viewport speed gates pass, but the drainage comparison
 against the reference footage fails with the default settings (see
-[Validation status](#validation-status)). The older **Create GPU Flow** (Drops/Connected),
-**Create Animated Flow** and **Build Flumen** workflows are unchanged.
+[Validation status](#validation-status)). The older workflows remain available. **Create GPU Flow** now defaults to
+Connected Water display; **Create Animated Flow** and **Build Flumen** are unchanged.
 
 Requirements: Windows, an NVIDIA GPU with CUDA, Blender 5.2, and the extension
 zip, which bundles Warp 1.17.0. Set Scene Unit Scale to 1.0 (one unit = one meter).
@@ -30,9 +30,15 @@ The collision mesh must stay still.
      enough water gathers, so thick spots break through first and later water
      follows the wet tracks, forming rivulets. 0.05–0.1 is a useful range; 0.07
      was used for the rivulet stills.
-3. Play from the start frame. **Reset GPU Flow** restarts the simulation. When only
-   cosmetic settings change, the stationary preparation (chart, contact grid) is
-   reused. Physical changes mark the host dirty.
+3. Play from the start frame.
+   - Display-only edits never need a reset.
+   - Physical edits mark the host dirty. **Reset GPU Flow** then replays from the
+     start and reuses the stationary preparation (chart, contact grid) as long as
+     the geometry and the field/contact spacings are unchanged.
+   - FIELD-specific controls appear in the panel: Pressure Cap, Capillary Cap,
+     Surface Damping, merge scales and wetness rates. Diagnostics show the
+     effective field spacing (with its coarsening against the requested value),
+     force-cap hits (pressure/capillary cap activations) and the interval Courant number.
 4. Display settings change only the drawing, never the simulation:
    - **Preview Style**: **Points** is fastest. **Water** draws a screen-space
      smoothed surface, viewport only.
@@ -48,7 +54,10 @@ The collision mesh must stay still.
    cosmetic thin coat where water has passed; its volume is reported separately.
    The result plays back as a mesh sequence with a wet-proxy source. Playback and
    rendering never initialize CUDA, so a `.blend` file plus its cache and mesh
-   folders renders on a machine without a GPU solver.
+   folders renders on a machine without a GPU solver. Creating baked water turns
+   on Render > Lock Interface, because playback rewrites mesh data on frame change.
+   The add-on's Mesh button uses one worker process. The 8-worker timings below
+   come from `scripts/render_offline_clip.py --workers 8`.
 7. Render the result:
    - **EEVEE** works.
    - **Cycles** with **Motion Blur** (shutter about 1 frame) also streaks falling

@@ -92,6 +92,8 @@ class FrameStats:
     resample_ms: float = 0.
     deposit_ms: float = 0.
     field_courant: float = 0.
+    field_limited_count: int = 0      # pressure/capillary cap activations over the last interval's substeps
+    field_effective_spacing: float = 0.
 
 
 class ParticlePool:

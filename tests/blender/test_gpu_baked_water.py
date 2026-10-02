@@ -49,6 +49,7 @@ class GPUBakedWaterTests(unittest.TestCase):
             for frame in (1,2,3,2): self.scene.frame_set(frame)
             self.assertGreater(len(water.data.polygons),0)
             self.assertEqual(water.get('sf_baked_frame'),2)
+            self.assertTrue(self.scene.render.use_lock_interface)
             velocity=water.data.attributes.get('velocity')   # Cycles motion blur on changing topology
             self.assertIsNotNone(velocity); self.assertEqual(len(velocity.data),len(water.data.vertices))
             water.data.materials[0]=bpy.data.materials.new('Other Water')

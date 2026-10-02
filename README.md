@@ -1,15 +1,14 @@
 # Flumen
 
-Experimental **Blender 5.2 LTS** surface flow and drips, version 0.0.3.
+Experimental **Blender 5.2 LTS** surface flow and drips, version 0.0.4.
 
-The development branch includes experimental connected water, coating, merging
-and wetness. Its visual reference match and million-particle interactive target
-are **not achieved**. The revised target is real-time particles while editing,
-with final meshing deferred to a later bake. See the
-[measured checkpoint](docs/CONNECTED_WATER_VALIDATION.md) and
-[revised design for review](docs/superpowers/specs/2026-10-01-million-particle-preview-design.md).
-The packaged 0.0.3 workflow and measurements below describe the earlier Drops
-foundation; the development increment is not a new release.
+0.0.4 adds a Surface Field particle preview that simulates and draws one million
+particles at 1080p in real time on an RTX 5050, an explicit particle cache bake,
+and CPU offline meshing for final renders. The million-particle viewport target is
+met. The visual match to the reference footage is **not** met at default
+settings, so the backend is labelled experimental. See
+[Particle preview and bake](docs/PARTICLE_PREVIEW_AND_BAKE.md) and the
+[measured evidence](docs/CONNECTED_WATER_VALIDATION.md).
 
 ## Field particle preview and offline bake (0.0.4, experimental)
 
@@ -20,7 +19,11 @@ particles to disk, and **Mesh Particle Cache** turns them into renderable water
 that plays back without CUDA. See [Particle preview and bake](docs/PARTICLE_PREVIEW_AND_BAKE.md)
 for the workflow, measured costs and the failed reference-drainage gate.
 
-## GPU Flow: continuous emission
+## GPU Flow: continuous emission (pairwise backend)
+
+These measurements are from 0.0.3. **Create GPU Flow** now creates a Connected
+Water host (reconstructed surface) by default; the figures below were measured
+with the earlier Drops display.
 
 Install the Windows GPU extension built with the bundled Warp 1.17.0 wheel.
 Select a stationary mesh, open **3D View > Sidebar > Flumen > GPU Flow**, and
@@ -44,8 +47,8 @@ viewport modes can perform differently; JIT initialization is excluded.
 
 GPU Flow is **live particle preview** on stationary surfaces. It does not yet
 produce the reference video's connected films/rivulets or transport water on
-deforming surfaces. GPU hosts are excluded from offline rendering until a bake
-export workflow is implemented. Existing Geometry Nodes bakes remain available
+deforming surfaces. Live GPU hosts are excluded from offline rendering. For final
+renders, use the Field Particle Preview bake and mesh workflow above. Existing Geometry Nodes bakes remain available
 through the older Animated Flow workflow described below.
 
 Open [Flumen_GPU_Demo.blend](artifacts/Flumen_GPU_Demo.blend) with the GPU extension

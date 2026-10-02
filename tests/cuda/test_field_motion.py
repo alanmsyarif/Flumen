@@ -8,6 +8,18 @@ from flumen.gpu.source import build_source
 from flumen.gpu.prepared import prepare_source
 from flumen.gpu.solver import FlowSolver
 
+import warp as wp
+from flumen.gpu.field_motion import ParticleArrays
+
+
+@wp.kernel
+def unresolved_contacts(d: ParticleArrays, proposed: ParticleArrays, queue: wp.array(dtype=int),
+                        mesh: wp.uint64, adjacency: wp.array(dtype=int,ndim=2), islands: wp.array(dtype=int),
+                        capture_distance: float, capture_speed: float, turn: float, dt: float,
+                        unresolved: wp.array(dtype=int), diagnostics: wp.array(dtype=int)):
+    # Stand-in for exact_contacts that fails every queued particle.
+    i=queue[wp.tid()]; diagnostics[i]=1; wp.atomic_add(unresolved,0,1)
+
 
 class FieldMotionTests(unittest.TestCase):
     def make(self, config=None, vertices=None, triangles=None):
@@ -195,3 +207,26 @@ class FieldMotionTests(unittest.TestCase):
         deposit_attached(solver.pool,solver.prepared,solver.field)
         self.assertEqual(float(solver.field.volume.numpy().sum()),0.)
         self.assertEqual(float(solver.field.thickness.numpy().max()),0.)
+
+    def test_unresolved_contact_commits_nothing(self):
+        from flumen.gpu import field_motion
+        solver=self.make(vertices=[[0,0,0],[.1,0,0],[0,.1,0],[0,0,.0001],[.1,0,.0001],[0,.1,.0001]],
+                         triangles=[[0,1,2],[3,5,4]])
+        solver.seek(1)
+        self.set_particles(solver,[[.02,.02,.00005]]*2+[[.05,.05,0]],[[.6,.2]]*2+[[.3,.3]],states=[1,1,0])
+        solver.field.wetness.fill_(.25); solver.field.velocity.fill_(.5)
+        d=solver.pool.data
+        before={name:getattr(d,name).numpy().copy() for name in ('position','velocity','face','bary','state','volume','ids','active')}
+        ledger=solver.pool.ledger.numpy().copy(); next_id=solver.pool.next_id
+        wet=solver.field.wetness.numpy().copy(); field_velocity=solver.field.velocity.numpy().copy()
+        original=field_motion.exact_contacts; field_motion.exact_contacts=unresolved_contacts
+        try:
+            with self.assertRaisesRegex(RuntimeError,'unresolved'): solver.seek(2)
+        finally:
+            field_motion.exact_contacts=original
+        for name,value in before.items(): np.testing.assert_array_equal(getattr(d,name).numpy(),value,err_msg=name)
+        np.testing.assert_array_equal(solver.pool.ledger.numpy(),ledger)
+        self.assertEqual(solver.pool.next_id,next_id)
+        np.testing.assert_array_equal(solver.field.wetness.numpy(),wet)
+        np.testing.assert_array_equal(solver.field.velocity.numpy(),field_velocity)
+        self.assertEqual(solver.current_frame,1)

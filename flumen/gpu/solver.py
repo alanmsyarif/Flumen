@@ -140,7 +140,10 @@ class FlowSolver:
             for name,begin_event,end_event in events:
                 stages[name]+=wp.get_event_elapsed_time(begin_event,end_event,synchronize=False)
             self.stats.field_ms=field_ms
-            if self._field_step is not None: self.stats.field_courant=self._field_step.courant
+            if self._field_step is not None:
+                self.stats.field_courant=self._field_step.courant
+                self.stats.field_limited_count=self._field_step.limited_count
+            self.stats.field_effective_spacing=self.prepared.chart.effective_spacing
             self.stats.contact_ms=max(0.,stages['advance']-field_ms)
             self.stats.aggregation_ms=stages['aggregation']
             self.stats.resample_ms=stages['resample']

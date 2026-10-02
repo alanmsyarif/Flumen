@@ -42,6 +42,8 @@ def create_baked_water(cache_path, mesh_path, scene, source=None):
     frames = sorted(int(f) for f in manifest['frames'])
     water['sf_baked_start'], water['sf_baked_end'] = frames[0], frames[-1]
     scene.collection.objects.link(water)
+    # Playback rewrites mesh data on frame change; interactive renders need a locked UI to do that safely.
+    scene.render.use_lock_interface = True
     proxy = bpy.data.objects.new('Flumen Baked Wet Surface', bpy.data.meshes.new('Flumen Baked Wet Surface'))
     proxy.data['sf_baked_mesh_data'] = True
     _write_mesh(proxy.data, static['source_vertices'], static['source_triangles'])

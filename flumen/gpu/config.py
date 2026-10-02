@@ -5,7 +5,8 @@ from math import isfinite, sqrt
 # Bump when chart/contact construction changes, so retained preparation is rebuilt.
 PREPARATION_VERSION = 1
 # FIELD meshes cached particles offline; mesh quality never changes particle state.
-_FIELD_OFFLINE_ONLY = frozenset({'reconstruction_scale'})
+# FIELD ignores these: offline-only reconstruction, and the LEGACY pairwise interaction toggle.
+_FIELD_OFFLINE_ONLY = frozenset({'reconstruction_scale', 'interactions_enabled'})
 
 
 def physical_key(config) -> tuple:
