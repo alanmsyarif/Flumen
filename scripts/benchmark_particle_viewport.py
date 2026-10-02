@@ -77,7 +77,7 @@ class ViewportGate(Probe):
         report=dict(measurement_kind='particle_viewport',status='failed' if self.failure else 'passed',
             failure=self.failure,distribution=self.args.distribution,capacity=self.args.count,
             warmup_frames=self.args.warmup,measured_frames=len(self.samples),wall_seconds=self.wall_seconds,
-            viewport=(1920,1080),shading='SOLID',point_size=self.args.point_size,
+            viewport=(1920,1080),shading='SOLID',point_size=self.args.point_size,style=self.args.style,
             gpu_backend=gpu.platform.backend_type_get(),gpu=gpu.platform.renderer_get(),
             gpu_driver=gpu.platform.version_get(),blender=bpy.app.version_string,
             physical_dt=solver.dt,source_triangles=len(solver.source.triangles_cpu),
@@ -116,6 +116,9 @@ def main():
     parser.add_argument('--warmup',type=int,default=120)
     parser.add_argument('--frames',type=int,default=600)
     parser.add_argument('--point-size',type=float,default=2.)
+    parser.add_argument('--style',choices=['POINTS','WATER'],default='POINTS')
+    parser.add_argument('--water-smoothing',type=float,default=.003)
+    parser.add_argument('--water-scale',type=float,default=3.)
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     bpy.context.preferences.view.show_splash=False
