@@ -11,9 +11,12 @@ def create_field_demo(count=1_000_000, source_start=.55, source_softness=.05):
     scene = bpy.context.scene
     scene.render.fps = 30; scene.frame_start = 1; scene.frame_set(1)
     for obj in [o for o in scene.objects if o.type == 'MESH']: bpy.data.objects.remove(obj, do_unlink=True)
-    window = bpy.context.window_manager.windows[0]
-    area = next(a for a in window.screen.areas if a.type == 'VIEW_3D')
-    with bpy.context.temp_override(window=window, area=area):
+    windows = bpy.context.window_manager.windows
+    area = next((a for a in windows[0].screen.areas if a.type == 'VIEW_3D'), None) if windows else None
+    if area is not None:
+        with bpy.context.temp_override(window=windows[0], area=area):
+            bpy.ops.mesh.primitive_monkey_add()
+    else:  # background Blender (offline bakes and renders)
         bpy.ops.mesh.primitive_monkey_add()
     source = bpy.context.view_layer.objects.active
     source.name = 'Suzanne 0.3 m'; source.scale = (.115,)*3; source.location.z = .15
@@ -28,6 +31,7 @@ def create_field_demo(count=1_000_000, source_start=.55, source_softness=.05):
             resample_target=count, minimum_substeps=8, point_size=2., point_color=(.85, .9, 1., 1.)).items():
         setattr(settings, name, value)
     runtime.reset_host(host)
+    if area is None: return scene, host
     space = area.spaces.active
     space.shading.type = 'SOLID'; space.shading.color_type = 'OBJECT'; space.shading.light = 'STUDIO'
     space.shading.background_type = 'VIEWPORT'; space.shading.background_color = (0., 0., 0.)
