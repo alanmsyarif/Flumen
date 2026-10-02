@@ -74,6 +74,7 @@ def main():
     parser.add_argument('--count',type=int,default=250_000)
     parser.add_argument('--frames',type=int,default=180)
     parser.add_argument('--drop-spacing',type=float,default=.0001)
+    parser.add_argument('--water-scale',type=float,default=1.,help='Particle radius multiplier on top of the 1M-volume radius')
     parser.add_argument('--film-spacing',type=float,default=.002)
     parser.add_argument('--film-smoothing',type=int,default=6)
     parser.add_argument('--workers',type=int,default=max(1,min(12,(os.cpu_count() or 2)//2)))
@@ -82,14 +83,14 @@ def main():
     flumen.register()
     scene,host=create_field_demo(count=args.count)
     # Keep the 1M fixture's total water volume at a reduced particle count.
-    radius=.0001*(1_000_000/args.count)**(1/3)
+    radius=.0001*(1_000_000/args.count)**(1/3)*args.water_scale
     host.flumen_gpu.radius=radius; runtime.reset_host(host)
     bust=bpy.data.materials.new('Bust'); bust.diffuse_color=(.08,.08,.08,1)
     bust.use_nodes=True; bust.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.06,.06,.06,1)
     host.flumen_gpu.source.data.materials.append(bust)
     scene.frame_end=args.frames
     source=host.flumen_gpu.source
-    report=dict(measurement_kind='offline_clip',particles=args.count,frames=args.frames,particle_radius=radius,
+    report=dict(measurement_kind='offline_clip',particles=args.count,frames=args.frames,particle_radius=radius,water_scale=args.water_scale,
                 drop_spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing)
     if args.reuse_cache:
         cached=CacheReader(args.work/'cache')
