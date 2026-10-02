@@ -38,16 +38,19 @@ class MeshOptions:
     min_thickness: float = 1e-5
     max_triangles: int = 20_000_000
     film_smoothing: int = 0        # volume-conserving diffusion steps on deposited film thickness
+    film_max_thickness: float = 0. # 0: off. Water above it at a node becomes a pendant drop (volume moves, not lost)
     free_crop: tuple = None        # ((x, y, z) low, (x, y, z) high): free drops outside are skipped and reported
+    drop_kernel: str = 'velocity'  # 'velocity': stretch along motion; 'pca': Yu & Turk neighbour anisotropy
 
     def __post_init__(self):
-        for value in (self.spacing, self.film_spacing, self.min_thickness):
+        for value in (self.spacing, self.film_spacing, self.min_thickness, self.film_max_thickness):
             if not isfinite(value) or value < 0: raise ValueError('Mesh distances must be finite and nonnegative')
         if self.spacing <= 0: raise ValueError('Mesh spacing must be positive')
         if not 1 <= self.tile_cells <= 32: raise ValueError('Tiles hold 1 to 32 cells per axis')
         if self.max_triangles < 1: raise ValueError('Triangle budget must be positive')
         if isinstance(self.film_smoothing, bool) or not isinstance(self.film_smoothing, int) or self.film_smoothing < 0:
             raise ValueError('Film smoothing must be a nonnegative integer')
+        if self.drop_kernel not in ('velocity', 'pca'): raise ValueError("Drop kernel must be 'velocity' or 'pca'")
         if self.free_crop is not None:
             low, high = (np.asarray(corner, float) for corner in self.free_crop)
             if low.shape != (3,) or high.shape != (3,) or not (np.isfinite(low).all() and np.isfinite(high).all() and (low < high).all()):
@@ -152,6 +155,16 @@ def _film(static, cached, options, lattice=None):
         volume += np.bincount(node[f[:, None], corners].ravel(), (w*arrays['volume'][attached][:, None]).ravel(), count)
     area = np.maximum(lattice['node_area'], 1e-30)
     volume = _smooth_film(volume, area, lattice['edges'], options.film_smoothing)
+    pooled_positions = np.empty((0, 3)); pooled_volumes = np.empty(0)
+    if options.film_max_thickness > 0.:
+        # Tiny lattice areas can turn a hanging drop into a "film" metres thick along the normal.
+        # A film cannot exceed the cap; the excess hangs as a round drop just off the surface.
+        excess = np.maximum(volume-options.film_max_thickness*area, 0.)
+        pooled = np.flatnonzero(excess > 0.)
+        volume = volume-excess
+        pooled_volumes = excess[pooled]
+        drop_radius = np.cbrt(pooled_volumes*.238732414637843)
+        pooled_positions = lattice['positions'][pooled]+lattice['normals'][pooled]*(options.film_max_thickness+drop_radius)[:, None]
     thickness = volume/area
     represented = float(volume.sum())
     mesh = _film_shell(lattice['positions'], lattice['normals'], thickness, lattice['tris'],
@@ -160,6 +173,7 @@ def _film(static, cached, options, lattice=None):
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
         excluded_volume=max(0., represented-mesh_volume), film_segments=n, film_nodes=count,
         dry_nodes=int((thickness < options.min_thickness).sum()),
+        pooled_volume=float(pooled_volumes.sum()), pooled_positions=pooled_positions, pooled_volumes=pooled_volumes,
         film_max_spacing=lattice['max_spacing'],
         unanchored_volume=float(arrays['volume'][(arrays['state'] == 0) & ~attached].astype(np.float64).sum()))
     return mesh
@@ -298,7 +312,57 @@ class _SurfaceBarrier:
         return result
 
 
-def _free_particles(cached, settings, crop=None):
+def _pca_kernels(p, support, min_neighbours=6, ratio=4., smoothing=.9):
+    """Yu & Turk anisotropic kernels: weighted neighbour covariance per drop gives a volume-
+    preserving ellipsoid (stretch factors multiply to one), so streams stay thin and connected
+    while isolated drops (fewer than `min_neighbours`) stay round. Centres are Laplacian-smoothed.
+    Returns smoothed centres, per-drop inverse-stretch matrices and maximum stretch."""
+    n = len(p)
+    # Bounded neighbourhoods: a few huge merged drops must not size the grid for everyone.
+    cell = float(min((2.*support).max(), 4.*np.median(support))) if n else 1.
+    reach = np.minimum(2.*support, cell)
+    keys = np.floor(p/cell).astype(np.int64)
+    order = np.lexsort((keys[:, 2], keys[:, 1], keys[:, 0])); sorted_keys = keys[order]
+    packed = (sorted_keys[:, 0]*1_000_003+sorted_keys[:, 1])*1_000_003+sorted_keys[:, 2]
+    offsets = [(dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)]
+    ranges = []
+    for dx, dy, dz in offsets:
+        target = ((keys[:, 0]+dx)*1_000_003+(keys[:, 1]+dy))*1_000_003+keys[:, 2]+dz
+        ranges.append((np.searchsorted(packed, target, 'left'), np.searchsorted(packed, target, 'right')))
+    candidates = sum(hi-lo for lo, hi in ranges)
+    found_i, found_j, found_d = [], [], []
+    bounds = np.searchsorted(np.cumsum(candidates), np.arange(0, int(candidates.sum())+1, 20_000_000)[1:])
+    for begin, stop in zip(np.r_[0, bounds], np.r_[bounds, n]):   # chunks of ~20M candidate pairs
+        rows = np.arange(begin, stop)
+        if not len(rows): continue
+        for lo, hi in ranges:
+            count = (hi-lo)[rows]
+            i = np.repeat(rows, count)
+            j = order[np.repeat(lo[rows], count)+(np.arange(count.sum())-np.repeat(np.cumsum(count)-count, count))]
+            d = np.linalg.norm(p[j]-p[i], axis=1); keep = d < reach[i]
+            found_i.append(i[keep]); found_j.append(j[keep]); found_d.append(d[keep])
+    i, j, d = np.concatenate(found_i), np.concatenate(found_j), np.concatenate(found_d)
+    w = 1.-(d/reach[i])**3
+    weight = np.bincount(i, w, n)
+    mean = np.stack([np.bincount(i, w*p[j, k], n) for k in range(3)], 1)/weight[:, None]
+    delta = p[j]-mean[i]
+    cov = np.zeros((n, 3, 3))
+    for a in range(3):
+        for b in range(a, 3):
+            cov[:, a, b] = cov[:, b, a] = np.bincount(i, w*delta[:, a]*delta[:, b], n)/weight
+    values, vectors = np.linalg.eigh(cov)                       # ascending eigenvalues
+    isolated = (np.bincount(i, minlength=n) < min_neighbours) | (values[:, 2] <= 0.)
+    values[isolated] = 1.
+    values = np.maximum(values, values[:, 2:3]/ratio)
+    stretch = np.sqrt(values)
+    stretch /= np.cbrt(stretch.prod(1))[:, None]                # volume-preserving
+    stretch = np.clip(stretch, 1./AXIAL_MAX, AXIAL_MAX)
+    matrix = np.einsum('nij,nj,nkj->nik', vectors, 1./stretch, vectors)
+    centres = np.where(isolated[:, None], p, (1.-smoothing)*p+smoothing*mean)
+    return centres, matrix, stretch.max(1)
+
+
+def _free_particles(cached, settings, crop=None, kernel='velocity', extra=None):
     a = cached.arrays; free = a['state'] == 1
     cropped = 0.
     if crop is not None:
@@ -306,12 +370,18 @@ def _free_particles(cached, settings, crop=None):
         cropped = float(a['volume'][free & ~inside].astype(np.float64).sum()); free &= inside
     p = a['position'][free].astype(np.float64); volume = a['volume'][free].astype(np.float64)
     velocity = a['velocity'][free].astype(np.float64)
+    if extra is not None and len(extra[1]):   # pendant drops pooled from capped film, at rest
+        p = np.concatenate([p, extra[0]]); volume = np.concatenate([volume, extra[1]])
+        velocity = np.concatenate([velocity, np.zeros((len(extra[1]), 3))])
     radius = np.cbrt(volume*.238732414637843); support = 2.*radius
     nominal = settings.get('radius')
     speed = np.linalg.norm(velocity, axis=1)
     axial = np.clip(1.+speed*.02/nominal, 1., AXIAL_MAX) if nominal else np.ones(len(p))
     axis = np.where(speed[:, None] > 1e-9, velocity/np.maximum(speed, 1e-30)[:, None], [0., 0., 1.])
-    return (p, volume, radius, support, axial, axis), cropped
+    if kernel == 'pca' and len(p):
+        p, matrix, axial = _pca_kernels(p, support)
+        return (p, volume, radius, support, axial, axis, matrix), cropped
+    return (p, volume, radius, support, axial, axis, None), cropped
 
 
 def _tile_field(tile, particles, members, origin, pitch, T):
@@ -321,7 +391,7 @@ def _tile_field(tile, particles, members, origin, pitch, T):
     bucketed by clipped box size for vectorization, then contributions are sorted back to
     (particle order, lexicographic point order) so one bincount adds them in a fixed order:
     the same order as evaluating particles one by one."""
-    p, volume, _, support, axial, axis = particles
+    p, volume, _, support, axial, axis, matrix = particles
     low = tile*T-1; size = T+3
     if not len(members): return np.zeros((size, size, size))
     extent = support[members]*axial[members]
@@ -340,10 +410,15 @@ def _tile_field(tile, particles, members, origin, pitch, T):
             g = lo[rank][:, None, :]+offsets[None]
             valid = (g < hi[rank][:, None, :]).all(-1)
             delta = origin+g*pitch-p[rows][:, None, :]
-            along = (delta*axis[rows][:, None, :]).sum(-1)
-            perp = delta-along[..., None]*axis[rows][:, None, :]
-            s2 = (support[rows]**2)[:, None]; tr2 = (1./axial[rows])[:, None]; ax2 = (axial[rows]**2)[:, None]
-            q2 = (perp*perp).sum(-1)/(s2*tr2)+along*along/(s2*ax2)
+            s2 = (support[rows]**2)[:, None]
+            if matrix is None:
+                along = (delta*axis[rows][:, None, :]).sum(-1)
+                perp = delta-along[..., None]*axis[rows][:, None, :]
+                tr2 = (1./axial[rows])[:, None]; ax2 = (axial[rows]**2)[:, None]
+                q2 = (perp*perp).sum(-1)/(s2*tr2)+along*along/(s2*ax2)
+            else:
+                q = np.einsum('nij,nmj->nmi', matrix[rows], delta)
+                q2 = (q*q).sum(-1)/s2
             valid &= q2 < 1.
             weight = (volume[rows]*315./(64.*np.pi*support[rows]**3))[:, None]
             value = weight*(1.-q2)**3
@@ -403,9 +478,9 @@ def _contour(field, tile, origin, pitch, T, dims):
     return unique, positions[first], normals[first], inverse.reshape(-1, 3)
 
 
-def _free_tiles(static, cached, options, settings, stats):
-    particles, cropped = _free_particles(cached, settings, options.free_crop)
-    p, volume, radius, support, axial, _ = particles
+def _free_tiles(static, cached, options, settings, stats, extra=None):
+    particles, cropped = _free_particles(cached, settings, options.free_crop, options.drop_kernel, extra)
+    p, volume, radius, support, axial, _, _ = particles
     stats.update(free_volume=float(volume.sum()), subresolution_volume=float(volume[radius < options.spacing].sum()),
                  cropped_volume=cropped, tiles=0, max_tile_cells=0)
     if not len(p): return
@@ -455,8 +530,9 @@ def _signed_volume(vertices, triangles):
 
 def _iter(static, cached, options, settings, stats, lattice=None):
     film = _film(static, cached, options, lattice)
+    extra = (film.diagnostics.pop('pooled_positions'), film.diagnostics.pop('pooled_volumes'))
     yield WaterGeometry(film, MeshBatch.empty(), {'kind': 'attached'})
-    for batch in _free_tiles(static, cached, options, settings, stats):
+    for batch in _free_tiles(static, cached, options, settings, stats, extra):
         yield WaterGeometry(MeshBatch.empty(), batch, {'kind': 'free', 'tile': batch.diagnostics['tile']})
 
 
@@ -500,7 +576,7 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
         film_max_spacing=film.diagnostics['film_max_spacing'],
         attached_represented_volume=film.diagnostics['represented_volume'],
         attached_mesh_volume=film.diagnostics['mesh_volume'], attached_excluded_volume=film.diagnostics['excluded_volume'],
-        unanchored_volume=film.diagnostics['unanchored_volume'],
+        unanchored_volume=film.diagnostics['unanchored_volume'], pooled_volume=film.diagnostics['pooled_volume'],
         free_volume=stats.get('free_volume', 0.), free_mesh_volume=free_volume,
         subresolution_volume=stats.get('subresolution_volume', 0.), cropped_volume=stats.get('cropped_volume', 0.),
         tiles=stats.get('tiles', 0),

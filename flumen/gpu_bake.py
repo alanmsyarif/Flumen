@@ -167,8 +167,13 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
                                      description='Free-drop grid pitch')
     film_spacing: bpy.props.FloatProperty(name='Film Spacing',default=.0005,min=.00005,max=.02,subtype='DISTANCE',
                                           description='Attached film lattice edge')
-    film_smoothing: bpy.props.IntProperty(name='Film Smoothing',default=6,min=0,max=200,
+    film_smoothing: bpy.props.IntProperty(name='Film Smoothing',default=20,min=0,max=200,
                                           description='Volume-conserving smoothing steps on film thickness')
+    film_max_thickness: bpy.props.FloatProperty(name='Film Max Thickness',default=.002,min=0.,max=.02,subtype='DISTANCE',
+                                                description='Thicker pooled water becomes pendant drops; 0 disables')
+    drop_kernel: bpy.props.EnumProperty(name='Drop Shape',default='PCA',items=[
+        ('PCA','Neighbour (PCA)','Stretch drops along neighbouring water (streams); isolated drops stay round'),
+        ('VELOCITY','Velocity','Stretch drops along their motion')])
     directory: bpy.props.StringProperty(name='Parent Folder',subtype='DIR_PATH')
     mesh_name: bpy.props.StringProperty(name='Mesh Name',default='flumen_water_mesh')
 
@@ -192,7 +197,8 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
         self._path=Path(bpy.path.abspath(self.directory))/self.mesh_name
         try:
             self._reader=CacheReader(host['sf_particle_cache'])
-            self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing,film_spacing=self.film_spacing,film_smoothing=self.film_smoothing),self._path)
+            self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing,film_spacing=self.film_spacing,film_smoothing=self.film_smoothing,
+                                    film_max_thickness=self.film_max_thickness,drop_kernel=self.drop_kernel.lower()),self._path)
         except (ValueError,OSError) as exc:
             self.report({'ERROR'},str(exc)); return {'CANCELLED'}
         self._host=host; self._done=0

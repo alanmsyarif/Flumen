@@ -196,3 +196,46 @@ def test_free_drop_crop_reports_excluded_volume(tmp_path):
                               tmp_path/'alone_mesh', lambda: False)
     assert crop['tiles'] < full['tiles'] and crop['free_triangles'] == alone['free_triangles'] < full['free_triangles']
     with pytest.raises(ValueError): MeshOptions(spacing=.001, free_crop=((0, 0, 0), (-1, 0, 0)))
+
+
+def test_pca_kernel_keeps_isolated_drops_round_and_streams_connected(tmp_path, monkeypatch):
+    from flumen import offline_mesher as M
+    # An isolated fast drop: the velocity kernel stretches it into a needle, PCA keeps it round.
+    reader = write_cache(tmp_path/'fast', [[0, 0, -.01], [.001, 0, -.01], [0, .001, -.01]], [[0, 1, 2]], [0],
+                         [((0, 0, 0), 1, 0, (.3, .3), DROP)])
+    frame = reader.read(1); frame.arrays['velocity'][:] = (0., 0., -3.)
+    monkeypatch.setattr(reader, 'read', lambda f: frame)
+    settings = {'radius': R}
+    extents = {}
+    for kernel in ('velocity', 'pca'):
+        options = MeshOptions(spacing=R/4, drop_kernel=kernel)
+        mesh = [c.free for c in M._iter(reader.read_static(), frame, options, settings, {}) if c.diagnostics['kind'] == 'free']
+        v = np.concatenate([m.vertices for m in mesh])
+        extents[kernel] = np.ptp(v, axis=0)
+    assert extents['velocity'][2] > 1.5*extents['velocity'][0]          # stretched along velocity
+    assert extents['pca'][2] < 1.25*extents['pca'][0]                     # round
+    # A line of close drops meshes as one connected stream, thinner than isotropic blobs.
+    line = [((k*R*.8, 0, 0), 1, 0, (.3, .3), DROP) for k in range(40)]
+    reader = write_cache(tmp_path/'line', [[0, 0, -.01], [.001, 0, -.01], [0, .001, -.01]], [[0, 1, 2]], [0], line)
+    result = mesh_cached_frame(reader, 1, MeshOptions(spacing=R/4, drop_kernel='pca'), tmp_path/'line_mesh', lambda: False)
+    mesh = np.load(tmp_path/'line_mesh'/result['file'])
+    assert components(mesh['free_triangles']) == 1 and closed(mesh['free_triangles'])
+    span = np.ptp(mesh['free_vertices'], axis=0)
+    assert span[0] > 20*R and span[1] < 3*R
+    with pytest.raises(ValueError): MeshOptions(spacing=.001, drop_kernel='bogus')
+
+
+def test_film_cap_turns_pooled_water_into_a_pendant_drop(tmp_path):
+    # Lots of water anchored at one corner node: uncapped film shoots a long spike along the normal.
+    particles = [((0., 0., 0.), 0, 0, (0.999, 0.0005), 5e-10) for _ in range(20)]
+    reader = write_cache(tmp_path/'pool', *SQUARE, [0, 0], particles)
+    spike = mesh_cached_frame(reader, 1, MeshOptions(spacing=.0002, film_spacing=.001), tmp_path/'spike', lambda: False)
+    capped = mesh_cached_frame(reader, 1, MeshOptions(spacing=.0002, film_spacing=.001, film_max_thickness=.002),
+                               tmp_path/'capped', lambda: False)
+    a = np.load(tmp_path/'spike'/spike['file']); b = np.load(tmp_path/'capped'/capped['file'])
+    assert a['attached_vertices'][:, 2].max() > .01                         # uncapped: >1 cm spike
+    assert b['attached_vertices'][:, 2].max() <= .002+1e-6                  # capped film
+    assert len(b['free_triangles']) > 0 and closed(b['free_triangles'])     # pooled water became a drop
+    assert capped['pooled_volume'] > 0
+    total = capped['attached_represented_volume']+capped['pooled_volume']
+    assert abs(total-spike['attached_represented_volume']) <= 1e-9*total  # volume moved, not lost
