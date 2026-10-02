@@ -1,0 +1,13 @@
+{
+  "measurement_kind": "offline_mesh_probe",
+  "particles": 1000000,
+  "frame": 3,
+  "attached": 999816,
+  "free": 184,
+  "source_triangles": 15744,
+  "notes": "CPU NumPy meshing of one cached frame of the Suzanne drainage fixture (source_start 0.55). Library tracemalloc removed: it slowed the per-triangle path by ~25x.",
+  "results": [
+    {"drop_spacing": 0.0001, "film_spacing": 0.001, "film_segments": 11, "film_max_spacing": 0.00172, "seconds": 7.84, "mesh_bytes": 84355126, "attached_triangles": 3518876, "free_triangles": 16308, "attached_represented_volume": 4.188019e-06, "attached_mesh_volume": 4.165814e-06, "free_volume": 7.707e-10, "free_mesh_volume": 3.480e-10, "subresolution_volume": 7.086e-10, "tiles": 157},
+    {"drop_spacing": 0.0001, "film_spacing": 0.0005, "film_segments": 21, "film_max_spacing": 0.000899, "seconds": 26.53, "mesh_bytes": 271115734, "attached_triangles": 11268564, "free_triangles": 16308, "attached_represented_volume": 4.188019e-06, "attached_mesh_volume": 4.161841e-06, "free_volume": 7.707e-10, "free_mesh_volume": 3.480e-10, "subresolution_volume": 7.086e-10, "tiles": 157}
+  ]
+}

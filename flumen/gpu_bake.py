@@ -164,7 +164,9 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
     bl_description='Mesh every frame of the baked particle cache offline (CPU) and add CUDA-free playback objects'
 
     spacing: bpy.props.FloatProperty(name='Mesh Spacing',default=.0001,min=.00001,max=.01,subtype='DISTANCE',
-                                     description='Drop grid pitch and film lattice edge')
+                                     description='Free-drop grid pitch')
+    film_spacing: bpy.props.FloatProperty(name='Film Spacing',default=.0005,min=.00005,max=.02,subtype='DISTANCE',
+                                          description='Attached film lattice edge')
     directory: bpy.props.StringProperty(name='Parent Folder',subtype='DIR_PATH')
     mesh_name: bpy.props.StringProperty(name='Mesh Name',default='flumen_water_mesh')
 
@@ -188,7 +190,7 @@ class SF_OT_mesh_particle_cache(bpy.types.Operator):
         self._path=Path(bpy.path.abspath(self.directory))/self.mesh_name
         try:
             self._reader=CacheReader(host['sf_particle_cache'])
-            self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing),self._path)
+            self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing,film_spacing=self.film_spacing),self._path)
         except (ValueError,OSError) as exc:
             self.report({'ERROR'},str(exc)); return {'CANCELLED'}
         self._host=host; self._done=0

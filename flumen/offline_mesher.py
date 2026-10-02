@@ -21,7 +21,6 @@ from pathlib import Path
 from time import perf_counter
 import json
 import os
-import tracemalloc
 import numpy as np
 from .water_types import MeshBatch, WaterGeometry
 
@@ -84,8 +83,10 @@ def _lattice(n):
 def _film(static, cached, options):
     V = static['source_vertices'].astype(np.float64); T = static['source_triangles'].astype(np.int64); F = len(T)
     spacing = options.film_spacing or options.spacing
-    longest = float(np.linalg.norm(V[T]-V[np.roll(T, -1, axis=1)], axis=2).max())
-    n = int(min(256, max(1, ceil(longest/spacing))))
+    lengths = np.linalg.norm(V[T]-V[np.roll(T, -1, axis=1)], axis=2)
+    # One conforming subdivision for all faces (no T-junction cracks), sized by typical edges:
+    # the longest edges get a coarser film, reported as film_max_spacing.
+    n = int(min(256, max(1, ceil(float(np.percentile(lengths, 95))/spacing))))
     if 2*F*n*n > options.max_triangles:
         raise ValueError(f'Film lattice exceeds the triangle budget ({2*F*n*n:,} > {options.max_triangles:,})')
     li, lj, local, small = _lattice(n); m = len(li)
@@ -135,63 +136,77 @@ def _film(static, cached, options):
     mesh_volume = _signed_volume(mesh.vertices, mesh.triangles)
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
         excluded_volume=max(0., represented-mesh_volume), film_segments=n, film_nodes=count,
+        film_max_spacing=float(lengths.max())/n,
         unanchored_volume=float(arrays['volume'][(arrays['state'] == 0) & ~attached].astype(np.float64).sum()))
     return mesh
 
 
 def _film_shell(positions, normals, thickness, tris, hmin, budget):
+    """Closed film shell over nodes with thickness >= hmin, built per clipping case without Python loops.
+
+    Vertices come in (base, top) pairs: wet nodes, then wet/dry edge crossings at height hmin.
+    Per small triangle, rotated so its polygon starts at a wet corner:
+      3 wet: top + base; 1 wet (a): polygon a, x_ab, x_ca; 2 wet (a, b): polygon a, b, x_bc, x_ca.
+    Walls close cuts (x -> x) and lattice boundary edges (used by one small triangle)."""
+    count = len(positions)
     wet = thickness >= hmin
-    wet_count = wet[tris].sum(1)
-    edges = np.sort(np.stack([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]], 1).reshape(-1, 2), axis=1)
-    keys, uses = np.unique(edges[:, 0]*len(positions)+edges[:, 1], return_counts=True)
-    boundary = set(keys[uses == 1].tolist())
-    on_boundary = np.isin(edges[:, 0]*len(positions)+edges[:, 1], keys[uses == 1]).reshape(-1, 3).any(1)
-    vid = -np.ones(len(positions), np.int64); vid[wet] = 2*np.arange(int(wet.sum()))
-    points = [np.repeat(positions[wet], 2, axis=0)]
-    points[0][1::2] += normals[wet]*thickness[wet][:, None]
-    vertex_normals = [np.repeat(normals[wet], 2, axis=0)]; vertex_normals[0][0::2] *= -1
-    fast = (wet_count == 3) & ~on_boundary
-    abc = vid[tris[fast]]
-    out = [abc+1, abc[:, [0, 2, 1]]]
-    crossing = {}; extra_points = []; extra_normals = []; base = 2*int(wet.sum()); generated = []
+    vid = -np.ones(count, np.int64); vid[wet] = 2*np.arange(int(wet.sum()))
+    edges = np.sort(np.stack([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]], 1), axis=2)
+    edge_keys = edges[..., 0]*count+edges[..., 1]
+    unique, uses = np.unique(edge_keys, return_counts=True)
+    boundary = np.isin(edge_keys, unique[uses == 1])            # (T, 3): edge k joins corners k, k+1
+    cut = wet[edges[..., 0]] != wet[edges[..., 1]]
+    cross_keys = np.unique(edge_keys[cut])
+    lo, hi = cross_keys//count, cross_keys % count
+    lo, hi = np.where(wet[lo], hi, lo), np.where(wet[lo], lo, hi)  # lo: dry end, hi: wet end
+    s = ((hmin-thickness[lo])/(thickness[hi]-thickness[lo]))[:, None]
+    cross_points = positions[lo]+s*(positions[hi]-positions[lo])
+    cross_normals = normals[lo]+s*(normals[hi]-normals[lo])
+    cross_normals /= np.maximum(np.linalg.norm(cross_normals, axis=1, keepdims=True), 1e-30)
+    base = 2*int(wet.sum())
+    points = np.empty((base+2*len(cross_keys), 3)); vnormals = np.empty_like(points)
+    points[0:base:2] = positions[wet]; points[1:base:2] = positions[wet]+normals[wet]*thickness[wet][:, None]
+    vnormals[0:base:2] = -normals[wet]; vnormals[1:base:2] = normals[wet]
+    points[base::2] = cross_points; points[base+1::2] = cross_points+cross_normals*hmin
+    vnormals[base::2] = -cross_normals; vnormals[base+1::2] = cross_normals
 
-    def cross_vertex(a, b):
-        key = (min(a, b), max(a, b))
-        if key not in crossing:
-            lo, hi = key; t = (hmin-thickness[lo])/(thickness[hi]-thickness[lo])
-            p = positions[lo]+t*(positions[hi]-positions[lo])
-            nrm = normals[lo]+t*(normals[hi]-normals[lo]); nrm /= max(np.linalg.norm(nrm), 1e-30)
-            crossing[key] = base+len(extra_points)
-            extra_points.extend([p, p+nrm*hmin]); extra_normals.extend([-nrm, nrm])
-        return crossing[key]
+    def crossing(rows, k):   # vertex of the crossing on edge k of each row
+        return base+2*np.searchsorted(cross_keys, edge_keys[rows, k])
 
-    for tri in tris[(wet_count > 0) & ~fast]:
-        poly = []   # (vertex index, lattice edge or None for a node)
-        for e in range(3):
-            a, b = int(tri[e]), int(tri[(e+1) % 3])
-            if wet[a]: poly.append((vid[a], a, None))
-            if wet[a] != wet[b]: poly.append((cross_vertex(a, b), None, (min(a, b), max(a, b))))
-        if len(poly) < 3: continue
-        ids = [p[0] for p in poly]
-        for f in range(len(ids)-2):
-            generated.append((ids[0]+1, ids[f+1]+1, ids[f+2]+1)); generated.append((ids[0], ids[f+2], ids[f+1]))
-        for e in range(len(poly)):
-            p, q = poly[e], poly[(e+1) % len(poly)]
-            if p[2] is not None and q[2] is not None: side = True          # cut through the triangle
-            else:
-                edge = (min(p[1], q[1]), max(p[1], q[1])) if p[2] is None and q[2] is None else (p[2] or q[2])
-                side = edge[0]*len(positions)+edge[1] in boundary
-            if side:
-                a, b = p[0], q[0]
-                generated.append((a, b, b+1)); generated.append((a, b+1, a+1))
-        if 2*len(out[0])+len(generated) > budget: raise ValueError('Film exceeds the triangle budget')
-    if extra_points:
-        points.append(np.asarray(extra_points)); vertex_normals.append(np.asarray(extra_normals))
-    if generated: out.append(np.asarray(generated, np.int64))
+    out = []
+
+    def surface(poly):        # poly: list of (n,) base-vertex arrays in boundary order
+        for f in range(len(poly)-2):
+            out.append(np.stack([poly[0]+1, poly[f+1]+1, poly[f+2]+1], 1))
+            out.append(np.stack([poly[0], poly[f+2], poly[f+1]], 1))
+
+    def wall(a, b, keep):
+        a, b = a[keep], b[keep]
+        out.append(np.stack([a, b, b+1], 1)); out.append(np.stack([a, b+1, a+1], 1))
+
+    wet_corner = wet[tris]; wet_count = wet_corner.sum(1)
+    for case in (1, 2, 3):
+        rows = np.flatnonzero(wet_count == case)
+        if not len(rows): continue
+        flags = wet_corner[rows]
+        # Rotation r: corner r is the polygon start (the wet corner for 1, the corner after the dry one for 2).
+        r = np.argmax(flags, 1) if case == 1 else ((np.argmin(flags, 1)+1) % 3 if case == 2 else np.zeros(len(rows), np.int64))
+        k0, k1, k2 = r, (r+1) % 3, (r+2) % 3
+        a, b, c = vid[tris[rows, k0]], vid[tris[rows, k1]], vid[tris[rows, k2]]
+        e_ab, e_bc, e_ca = boundary[rows, k0], boundary[rows, k1], boundary[rows, k2]
+        if case == 3:
+            surface([a, b, c]); wall(a, b, e_ab); wall(b, c, e_bc); wall(c, a, e_ca)
+        elif case == 1:
+            x_ab, x_ca = crossing(rows, k0), crossing(rows, k2)
+            surface([a, x_ab, x_ca]); wall(x_ab, x_ca, np.ones(len(rows), bool))
+            wall(a, x_ab, e_ab); wall(x_ca, a, e_ca)
+        else:
+            x_bc, x_ca = crossing(rows, k1), crossing(rows, k2)
+            surface([a, b, x_bc, x_ca]); wall(x_bc, x_ca, np.ones(len(rows), bool))
+            wall(a, b, e_ab); wall(b, x_bc, e_bc); wall(x_ca, a, e_ca)
+        if sum(len(o) for o in out) > budget: raise ValueError('Film exceeds the triangle budget')
     triangles = np.concatenate(out) if out else np.empty((0, 3), np.int64)
-    if len(triangles) > budget: raise ValueError('Film exceeds the triangle budget')
-    return MeshBatch(np.concatenate(points).astype(np.float32), np.concatenate(vertex_normals).astype(np.float32),
-                     triangles.astype(np.int32), {})
+    return MeshBatch(points.astype(np.float32), vnormals.astype(np.float32), triangles.astype(np.int32), {})
 
 
 # ---------------------------------------------------------------- free drops
@@ -391,47 +406,43 @@ def iter_mesh_tiles(reader, frame: int, options: MeshOptions):
 
 def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Path, cancel, *, static=None) -> dict:
     """Mesh one cached frame to destination/frame_NNNNNNN.npz; returns diagnostics."""
-    started = perf_counter(); tracing = not tracemalloc.is_tracing()
-    if tracing: tracemalloc.start()
-    try:
-        static = reader.read_static() if static is None else static
-        cached = reader.read(frame); stats = {}
-        film = None; keys, positions, normals, triangles = [], [], [], []; total = 0
-        for chunk in _iter(static, cached, options, reader.header.physical_settings, stats):
-            if cancel(): raise RuntimeError('Meshing was cancelled')
-            if chunk.diagnostics['kind'] == 'attached':
-                film = chunk.attached; total += len(film.triangles); continue
-            batch = chunk.free
-            keys.append(batch.diagnostics['vertex_keys']); positions.append(batch.vertices); normals.append(batch.normals)
-            triangles.append(batch.triangles+sum(len(k) for k in keys[:-1]))
-            total += len(batch.triangles)
-            if total > options.max_triangles: raise ValueError('Mesh exceeds the triangle budget')
-        if keys:
-            unique, first, inverse = np.unique(np.concatenate(keys), axis=0, return_index=True, return_inverse=True)
-            free_vertices = np.concatenate(positions)[first]; free_normals = np.concatenate(normals)[first]
-            free_triangles = inverse.ravel()[np.concatenate(triangles)].astype(np.int32)
-        else:
-            free_vertices = free_normals = np.empty((0, 3), np.float32); free_triangles = np.empty((0, 3), np.int32)
-        wet = wet_corners(static, cached.wetness)
-        arrays = dict(attached_vertices=film.vertices, attached_normals=film.normals, attached_triangles=film.triangles,
-                      free_vertices=free_vertices, free_normals=free_normals, free_triangles=free_triangles, wet_corner=wet)
-        destination = Path(destination); destination.mkdir(parents=True, exist_ok=True)
-        buffer = BytesIO(); np.savez(buffer, **arrays); data = buffer.getvalue()
-        name = f'frame_{frame:07d}.npz'; temporary = destination/(name+'.tmp')
-        temporary.write_bytes(data); os.replace(temporary, destination/name)
-        peak = tracemalloc.get_traced_memory()[1]
-        free_volume = _signed_volume(free_vertices, free_triangles)
-        return dict(frame=frame, file=name, sha256=sha256(data).hexdigest(), bytes=len(data),
-            spacing=options.spacing, film_segments=film.diagnostics['film_segments'],
-            attached_represented_volume=film.diagnostics['represented_volume'],
-            attached_mesh_volume=film.diagnostics['mesh_volume'], attached_excluded_volume=film.diagnostics['excluded_volume'],
-            unanchored_volume=film.diagnostics['unanchored_volume'],
-            free_volume=stats.get('free_volume', 0.), free_mesh_volume=free_volume,
-            subresolution_volume=stats.get('subresolution_volume', 0.), tiles=stats.get('tiles', 0),
-            max_tile_cells=stats.get('max_tile_cells', 0), attached_triangles=len(film.triangles),
-            free_triangles=len(free_triangles), seconds=perf_counter()-started, peak_traced_bytes=peak)
-    finally:
-        if tracing: tracemalloc.stop()
+    started = perf_counter()
+    static = reader.read_static() if static is None else static
+    cached = reader.read(frame); stats = {}
+    film = None; keys, positions, normals, triangles = [], [], [], []; total = 0
+    for chunk in _iter(static, cached, options, reader.header.physical_settings, stats):
+        if cancel(): raise RuntimeError('Meshing was cancelled')
+        if chunk.diagnostics['kind'] == 'attached':
+            film = chunk.attached; total += len(film.triangles); continue
+        batch = chunk.free
+        keys.append(batch.diagnostics['vertex_keys']); positions.append(batch.vertices); normals.append(batch.normals)
+        triangles.append(batch.triangles+sum(len(k) for k in keys[:-1]))
+        total += len(batch.triangles)
+        if total > options.max_triangles: raise ValueError('Mesh exceeds the triangle budget')
+    if keys:
+        unique, first, inverse = np.unique(np.concatenate(keys), axis=0, return_index=True, return_inverse=True)
+        free_vertices = np.concatenate(positions)[first]; free_normals = np.concatenate(normals)[first]
+        free_triangles = inverse.ravel()[np.concatenate(triangles)].astype(np.int32)
+    else:
+        free_vertices = free_normals = np.empty((0, 3), np.float32); free_triangles = np.empty((0, 3), np.int32)
+    wet = wet_corners(static, cached.wetness)
+    arrays = dict(attached_vertices=film.vertices, attached_normals=film.normals, attached_triangles=film.triangles,
+                  free_vertices=free_vertices, free_normals=free_normals, free_triangles=free_triangles, wet_corner=wet)
+    destination = Path(destination); destination.mkdir(parents=True, exist_ok=True)
+    buffer = BytesIO(); np.savez(buffer, **arrays); data = buffer.getvalue()
+    name = f'frame_{frame:07d}.npz'; temporary = destination/(name+'.tmp')
+    temporary.write_bytes(data); os.replace(temporary, destination/name)
+    free_volume = _signed_volume(free_vertices, free_triangles)
+    return dict(frame=frame, file=name, sha256=sha256(data).hexdigest(), bytes=len(data),
+        spacing=options.spacing, film_segments=film.diagnostics['film_segments'],
+        film_max_spacing=film.diagnostics['film_max_spacing'],
+        attached_represented_volume=film.diagnostics['represented_volume'],
+        attached_mesh_volume=film.diagnostics['mesh_volume'], attached_excluded_volume=film.diagnostics['excluded_volume'],
+        unanchored_volume=film.diagnostics['unanchored_volume'],
+        free_volume=stats.get('free_volume', 0.), free_mesh_volume=free_volume,
+        subresolution_volume=stats.get('subresolution_volume', 0.), tiles=stats.get('tiles', 0),
+        max_tile_cells=stats.get('max_tile_cells', 0), attached_triangles=len(film.triangles),
+        free_triangles=len(free_triangles), seconds=perf_counter()-started)
 
 
 def iter_mesh_cache(reader, options: MeshOptions, destination: Path):
