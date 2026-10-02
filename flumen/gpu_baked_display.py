@@ -85,6 +85,10 @@ def update_baked_water(host, frame: int) -> None:
     vertices = np.concatenate([arrays['attached_vertices'], arrays['free_vertices']])
     triangles = np.concatenate([arrays['attached_triangles'], arrays['free_triangles']+count])
     _write_mesh(host.data, vertices, triangles)
+    # Per-vertex velocity (m/s) lets Cycles motion-blur drops across frames with changing topology.
+    velocity = np.zeros((len(vertices), 3), np.float32)
+    if 'free_velocity' in arrays: velocity[count:] = arrays['free_velocity']   # older meshes: no blur
+    host.data.attributes.new('velocity', 'FLOAT_VECTOR', 'POINT').data.foreach_set('vector', velocity.reshape(-1))
     proxy = wet_proxy(host)
     if proxy is not None:
         proxy.data.attributes['sf_wetness'].data.foreach_set('value', arrays['wet_corner'].reshape(-1))

@@ -394,8 +394,8 @@ def _free_particles(cached, settings, crop=None, kernel='velocity', extra=None):
     axis = np.where(speed[:, None] > 1e-9, velocity/np.maximum(speed, 1e-30)[:, None], [0., 0., 1.])
     if kernel == 'pca' and len(p):
         p, matrix, axial = _pca_kernels(p, support)
-        return (p, volume, radius, support, axial, axis, matrix), cropped
-    return (p, volume, radius, support, axial, axis, None), cropped
+        return (p, volume, radius, support, axial, axis, matrix, velocity), cropped
+    return (p, volume, radius, support, axial, axis, None, velocity), cropped
 
 
 def _tile_field(tile, particles, members, origin, pitch, T):
@@ -405,16 +405,16 @@ def _tile_field(tile, particles, members, origin, pitch, T):
     bucketed by clipped box size for vectorization, then contributions are sorted back to
     (particle order, lexicographic point order) so one bincount adds them in a fixed order:
     the same order as evaluating particles one by one."""
-    p, volume, _, support, axial, axis, matrix = particles
+    p, volume, _, support, axial, axis, matrix, velocity = particles
     low = tile*T-1; size = T+3
-    if not len(members): return np.zeros((size, size, size))
+    if not len(members): return np.zeros((size, size, size)), np.zeros((size, size, size, 3))
     extent = support[members]*axial[members]
     start = np.floor((p[members]-extent[:, None]-origin)/pitch).astype(np.int64)
     width = (np.ceil(2*extent/pitch)+2).astype(np.int64)
     lo = np.maximum(start, low); hi = np.minimum(start+width[:, None], low+size)
     span = (hi-lo).min(1) > 0
     side = (hi-lo).max(1)
-    keys, indices, contributions = [], [], []
+    keys, indices, contributions, owners = [], [], [], []
     for box in np.unique(side[span]):
         group = np.flatnonzero(span & (side == box))
         offsets = np.stack(np.meshgrid(*[np.arange(box)]*3, indexing='ij'), -1).reshape(-1, 3)
@@ -439,13 +439,20 @@ def _tile_field(tile, particles, members, origin, pitch, T):
             local = g-low
             flat = (local[..., 0]*size+local[..., 1])*size+local[..., 2]
             keys.append((rank[:, None]*size**3+flat)[valid]); indices.append(flat[valid]); contributions.append(value[valid])
-    if not keys: return np.zeros((size, size, size))
+            owners.append(np.broadcast_to(rows[:, None], valid.shape)[valid])
+    if not keys: return np.zeros((size, size, size)), np.zeros((size, size, size, 3))
     order = np.argsort(np.concatenate(keys), kind='stable')
-    return np.bincount(np.concatenate(indices)[order], np.concatenate(contributions)[order], size**3).reshape(size, size, size)
+    index = np.concatenate(indices)[order]; value = np.concatenate(contributions)[order]
+    owner_velocity = velocity[np.concatenate(owners)[order]]
+    field = np.bincount(index, value, size**3)
+    # Kernel-weighted momentum: field-normalized it is the drop velocity at each sample (for motion blur).
+    momentum = np.stack([np.bincount(index, value*owner_velocity[:, k], size**3) for k in range(3)], 1)
+    return field.reshape(size, size, size), momentum.reshape(size, size, size, 3)
 
 
-def _contour(field, tile, origin, pitch, T, dims):
-    """Marching tetrahedra over the tile's owned cells; returns edge keys, positions, normals, triangles."""
+def _contour(field, tile, origin, pitch, T, dims, momentum=None):
+    """Marching tetrahedra over the tile's owned cells; returns edge keys, positions, normals,
+    vertex velocities (zeros without a momentum grid), triangles."""
     low = tile*T-1
     grad = np.stack(np.gradient(field, pitch), -1)  # central differences on owned points thanks to the halo
     hot = np.argwhere(field[1:T+2, 1:T+2, 1:T+2] >= ISO)+1
@@ -456,7 +463,8 @@ def _contour(field, tile, origin, pitch, T, dims):
     values = np.stack([field[tuple((cells+CORNERS[q]).T)] for q in range(8)], 1)
     crossing = (values.min(1) < ISO) & (values.max(1) >= ISO)
     cells, values = cells[crossing], values[crossing]
-    keys, positions, normals = [], [], []
+    if momentum is None: momentum = np.zeros(field.shape+(3,))
+    keys, positions, normals, velocities = [], [], [], []
     for tet in TETS:
         tv = values[:, tet]; inside = tv >= ISO; nh = inside.sum(1)
         order = np.argsort(~inside, axis=1, kind='stable'); c = tet[order]
@@ -480,21 +488,24 @@ def _contour(field, tile, origin, pitch, T, dims):
                 pos = origin+((la+low)+t*(lb-la))*pitch
                 g = grad[tuple(np.moveaxis(la, -1, 0))]+t*(grad[tuple(np.moveaxis(lb, -1, 0))]-grad[tuple(np.moveaxis(la, -1, 0))])
                 nrm = -g/np.maximum(np.linalg.norm(g, axis=-1, keepdims=True), 1e-30)
+                ma, mb = momentum[tuple(np.moveaxis(la, -1, 0))], momentum[tuple(np.moveaxis(lb, -1, 0))]
+                vel = (ma+t*(mb-ma))/ISO   # the field is exactly ISO at the vertex
                 cross = np.cross(pos[:, 1]-pos[:, 0], pos[:, 2]-pos[:, 0])
                 flip = (cross*direction).sum(1) < 0
-                pos[flip] = pos[flip][:, [0, 2, 1]]; nrm[flip] = nrm[flip][:, [0, 2, 1]]
+                pos[flip] = pos[flip][:, [0, 2, 1]]; nrm[flip] = nrm[flip][:, [0, 2, 1]]; vel[flip] = vel[flip][:, [0, 2, 1]]
                 key = np.stack([np.minimum(ida, idb), np.maximum(ida, idb)], -1)
                 key[flip] = key[flip][:, [0, 2, 1]]
                 keys.append(key.reshape(-1, 2)); positions.append(pos.reshape(-1, 3)); normals.append(nrm.reshape(-1, 3))
+                velocities.append(vel.reshape(-1, 3))
     if not keys: return None
     keys = np.concatenate(keys); positions = np.concatenate(positions); normals = np.concatenate(normals)
     unique, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
-    return unique, positions[first], normals[first], inverse.reshape(-1, 3)
+    return unique, positions[first], normals[first], np.concatenate(velocities)[first], inverse.reshape(-1, 3)
 
 
 def _free_tiles(static, cached, options, settings, stats, extra=None):
     particles, cropped = _free_particles(cached, settings, options.free_crop, options.drop_kernel, extra)
-    p, volume, radius, support, axial, _, _ = particles
+    p, volume, radius, support, axial, _, _, _ = particles
     stats.update(free_volume=float(volume.sum()), subresolution_volume=float(volume[radius < options.spacing].sum()),
                  cropped_volume=cropped, tiles=0, max_tile_cells=0)
     if not len(p): return
@@ -519,19 +530,19 @@ def _free_tiles(static, cached, options, settings, stats, extra=None):
     for index, tile in enumerate(tiles):
         end = starts[index+1] if index+1 < len(starts) else len(pairs)
         members = pairs[starts[index]:end, 3]
-        field = _tile_field(tile, particles, members, origin, pitch, T)
+        field, momentum = _tile_field(tile, particles, members, origin, pitch, T)
         wet = np.flatnonzero(field.ravel() > 0)
         if len(wet):
             size = T+3
             local = np.stack(np.unravel_index(wet, (size,)*3), 1)
             near = barrier.near(origin+(local+tile*T-1)*pitch)
-            field.ravel()[wet[near]] = 0.
+            field.ravel()[wet[near]] = 0.; momentum.reshape(-1, 3)[wet[near]] = 0.
         stats['tiles'] += 1; stats['max_tile_cells'] = max(stats['max_tile_cells'], (T+2)**3)
-        contour = _contour(field, tile, origin, pitch, T, dims)
+        contour = _contour(field, tile, origin, pitch, T, dims, momentum)
         if contour is None: continue
-        keys, positions, normals, triangles = contour
+        keys, positions, normals, velocities, triangles = contour
         yield MeshBatch(positions.astype(np.float32), normals.astype(np.float32), triangles.astype(np.int32),
-                        dict(vertex_keys=keys, tile=tuple(int(x) for x in tile)))
+                        dict(vertex_keys=keys, vertex_velocity=velocities.astype(np.float32), tile=tuple(int(x) for x in tile)))
 
 
 # ---------------------------------------------------------------- public API
@@ -561,25 +572,28 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
     started = perf_counter()
     static = reader.read_static() if static is None else static
     cached = reader.read(frame); stats = {}
-    film = None; keys, positions, normals, triangles = [], [], [], []; total = 0
+    film = None; keys, positions, normals, velocities, triangles = [], [], [], [], []; total = 0
     for chunk in _iter(static, cached, options, reader.header.physical_settings, stats, lattice):
         if cancel(): raise RuntimeError('Meshing was cancelled')
         if chunk.diagnostics['kind'] == 'attached':
             film = chunk.attached; total += len(film.triangles); continue
         batch = chunk.free
         keys.append(batch.diagnostics['vertex_keys']); positions.append(batch.vertices); normals.append(batch.normals)
+        velocities.append(batch.diagnostics['vertex_velocity'])
         triangles.append(batch.triangles+sum(len(k) for k in keys[:-1]))
         total += len(batch.triangles)
         if total > options.max_triangles: raise ValueError('Mesh exceeds the triangle budget')
     if keys:
         unique, first, inverse = np.unique(np.concatenate(keys), axis=0, return_index=True, return_inverse=True)
         free_vertices = np.concatenate(positions)[first]; free_normals = np.concatenate(normals)[first]
+        free_velocity = np.concatenate(velocities)[first]
         free_triangles = inverse.ravel()[np.concatenate(triangles)].astype(np.int32)
     else:
-        free_vertices = free_normals = np.empty((0, 3), np.float32); free_triangles = np.empty((0, 3), np.int32)
+        free_vertices = free_normals = free_velocity = np.empty((0, 3), np.float32); free_triangles = np.empty((0, 3), np.int32)
     wet = wet_corners(static, cached.wetness)
     arrays = dict(attached_vertices=film.vertices, attached_normals=film.normals, attached_triangles=film.triangles,
-                  free_vertices=free_vertices, free_normals=free_normals, free_triangles=free_triangles, wet_corner=wet)
+                  free_vertices=free_vertices, free_normals=free_normals, free_triangles=free_triangles,
+                  free_velocity=free_velocity, wet_corner=wet)
     destination = Path(destination); destination.mkdir(parents=True, exist_ok=True)
     buffer = BytesIO(); np.savez(buffer, **arrays); data = buffer.getvalue()
     name = f'frame_{frame:07d}.npz'; temporary = destination/(name+'.tmp')

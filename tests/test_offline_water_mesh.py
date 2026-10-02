@@ -9,7 +9,7 @@ R = 2e-4
 DROP = 4/3*np.pi*R**3
 
 
-def write_cache(path, vertices, triangles, islands, particles, frames=1, wetness=None):
+def write_cache(path, vertices, triangles, islands, particles, frames=1, wetness=None, velocity=(0., 0., 0.)):
     """particles: list of (position, state, face, bary, volume) per frame (same for each frame)."""
     vertices = np.asarray(vertices, np.float32); triangles = np.asarray(triangles, np.int32)
     normals = np.cross(vertices[triangles[:, 1]]-vertices[triangles[:, 0]], vertices[triangles[:, 2]]-vertices[triangles[:, 0]])
@@ -27,6 +27,7 @@ def write_cache(path, vertices, triangles, islands, particles, frames=1, wetness
         for i, (position, state, face, bary, volume) in enumerate(particles):
             arrays['position'][i] = position; arrays['state'][i] = state; arrays['face'][i] = face
             arrays['bary'][i] = bary; arrays['volume'][i] = volume; arrays['ids'][i] = i; arrays['slot'][i] = i
+            arrays['velocity'][i] = velocity
         w = np.zeros(len(vertices), np.float32) if wetness is None else np.asarray(wetness, np.float32)
         writer.write(CachedFrame(frame, arrays, w, np.zeros(4, np.int64), np.zeros(2, np.float64), n))
     writer.finish()
@@ -255,3 +256,12 @@ def test_film_sheen_keeps_wetted_surface_coated(tmp_path):
     half = write_cache(tmp_path/'half', *SQUARE, [0, 0], [], wetness=[1., 0., 1., 0.])
     part = mesh_cached_frame(half, 1, MeshOptions(spacing=.001, film_sheen=2e-5), tmp_path/'part', lambda: False)
     assert np.load(tmp_path/'part'/part['file'])['attached_vertices'][:, 0].max() < .01
+
+
+def test_free_vertices_carry_drop_velocity_for_motion_blur(tmp_path):
+    column = [((0, 0, k*3*R), 1, 0, (.3, .3), DROP) for k in range(3)]
+    reader = write_cache(tmp_path/'fall', *SQUARE, [0], column, velocity=(.5, 0., -3.))
+    result = mesh_cached_frame(reader, 1, MeshOptions(spacing=R/2), tmp_path/'mesh', lambda: False)
+    mesh = np.load(tmp_path/'mesh'/result['file'])
+    assert len(mesh['free_vertices']) and mesh['free_velocity'].shape == mesh['free_vertices'].shape
+    assert np.allclose(mesh['free_velocity'], (.5, 0., -3.), atol=1e-5)

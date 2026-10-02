@@ -46,12 +46,18 @@ def stage(scene, water, source):
     source.color=wet_proxy(water).color=(.08,.08,.08,1); water.color=(.85,.9,1.,1.)
 
 
-def render(scene, engine, path, stills, frames_dir):
+def render(scene, engine, path, stills, frames_dir, shutter=0.):
     """Render every frame to PNG, keep the still frames, then encode an MP4 with system ffmpeg."""
     import subprocess
     scene.render.engine=engine
     if engine=='BLENDER_WORKBENCH':
         scene.display.shading.light='STUDIO'; scene.display.shading.color_type='OBJECT'
+    if engine=='CYCLES':
+        preferences=bpy.context.preferences.addons['cycles'].preferences
+        preferences.compute_device_type='CUDA'; preferences.get_devices()
+        scene.cycles.device='GPU'; scene.cycles.samples=64
+    # Cycles blurs drops from the mesh 'velocity' attribute; EEVEE ignores it.
+    scene.render.use_motion_blur=shutter > 0.; scene.render.motion_blur_shutter=shutter or .5
     frames_dir.mkdir(parents=True,exist_ok=True)
     scene.render.image_settings.file_format='PNG'
     scene.render.filepath=str(frames_dir/'f####')
@@ -80,6 +86,8 @@ def main():
     parser.add_argument('--film-max-thickness',type=float,default=.002)
     parser.add_argument('--drop-kernel',choices=['velocity','pca'],default='pca')
     parser.add_argument('--film-sheen',type=float,default=2e-5)
+    parser.add_argument('--water-engine',choices=['eevee','cycles'],default='eevee')
+    parser.add_argument('--shutter',type=float,default=0.,help='Motion blur shutter in frames (Cycles; 0 = off)')
     parser.add_argument('--free-crop',type=float,nargs=6,default=[-.3,-.3,-.02,.3,.3,.4],
                         help='Mesh free drops only inside x0 y0 z0 x1 y1 z1 (meters); out-of-shot drops are reported')
     parser.add_argument('--workers',type=int,default=max(1,min(12,(os.cpu_count() or 2)//2)))
@@ -118,7 +126,8 @@ def main():
     water=create_baked_water(args.work/'cache',args.work/'mesh',scene,source=source)
     stage(scene,water,source)
     report['opaque_render_seconds']=render(scene,'BLENDER_WORKBENCH',args.prefix.with_name(args.prefix.name+'-opaque'),STILLS,args.work/'opaque_frames')
-    report['water_render_seconds']=render(scene,'BLENDER_EEVEE',args.prefix.with_name(args.prefix.name+'-water'),STILLS,args.work/'water_frames')
+    report['water_render_seconds']=render(scene,'CYCLES' if args.water_engine=='cycles' else 'BLENDER_EEVEE',
+                                         args.prefix.with_name(args.prefix.name+'-water'),STILLS,args.work/'water_frames',args.shutter)
     report['memory']=memory_snapshot()
     args.prefix.with_suffix('.json').write_text(json.dumps(report,indent=2),encoding='utf8')
     print('OFFLINE_CLIP',json.dumps({k:v for k,v in report.items() if k not in ('mesh_frames','memory')}),flush=True)
