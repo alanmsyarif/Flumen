@@ -7,6 +7,21 @@ from .emission import emit, emit_batch
 from .motion import advance, advance_coupled
 
 
+def owned_array_bytes(*roots) -> int:
+    """CUDA wp.array bytes reachable from Flumen objects; BVH and graph storage excluded."""
+    seen=set(); total=0; stack=list(roots)
+    while stack:
+        value=stack.pop()
+        if isinstance(value,wp.array):
+            if value.device.is_cuda and value.ptr and value.ptr not in seen:
+                seen.add(value.ptr); total+=value.capacity
+        elif isinstance(value,(list,tuple)):
+            stack.extend(value)
+        elif id(value) not in seen and any(c.__module__.startswith('flumen') for c in type(value).__mro__):
+            seen.add(id(value)); stack.extend(vars(value).values())
+    return total
+
+
 class FlowSolver:
     def __init__(self, config, source, device, start_frame=1, fps=30, fps_base=1.0, *, prepared=None):
         config.validate()
@@ -74,6 +89,12 @@ class FlowSolver:
             self.reset()
         begin = self.start_frame if self.current_frame is None else max(self.start_frame,self.current_frame+1)
         start = perf_counter()
+        stream = wp.get_stream(self.device.alias); events = []; field_ms = 0.
+        def timed(name, function, *args, **kwargs):
+            # CUDA events time queued GPU work without adding host synchronization.
+            pair = (wp.Event(self.device.alias,enable_timing=True),wp.Event(self.device.alias,enable_timing=True))
+            stream.record_event(pair[0]); result = function(*args,**kwargs); stream.record_event(pair[1])
+            events.append((name,*pair)); return result
         for f in range(begin,frame+1):
             self.source.refresh_sampling(self.config)
             if f > self.start_frame:
@@ -83,11 +104,10 @@ class FlowSolver:
                 if self.field is not None:
                     from .field_motion import advance_field_particles
                     from .field_aggregate import aggregate_field_particles
-                    self._field_step=advance_field_particles(self.pool,self.prepared,self.field,self.config,self.dt,
-                                                             reuse_deposit=True)
-                    aggregation_start=perf_counter()
-                    aggregate_field_particles(self.pool,self.prepared,self.config)
-                    self._field_step.aggregation_ms=(perf_counter()-aggregation_start)*1000
+                    self._field_step=timed('advance',advance_field_particles,self.pool,self.prepared,self.field,
+                                           self.config,self.dt,reuse_deposit=True)
+                    field_ms+=self._field_step.field_ms
+                    timed('aggregation',aggregate_field_particles,self.pool,self.prepared,self.config)
                 elif self.interaction is None:
                     advance(self.pool,self.source,self.config,self.dt)
                 else:
@@ -98,8 +118,8 @@ class FlowSolver:
             if self.field is not None:
                 from .field_solver import deposit_attached
                 from .field_aggregate import resample_particles
-                resample_particles(self.pool,self.prepared,self.config.resample_target)
-                deposit_attached(self.pool,self.prepared,self.field)
+                timed('resample',resample_particles,self.pool,self.prepared,self.config.resample_target)
+                timed('deposit',deposit_attached,self.pool,self.prepared,self.field)
             if self.surface is not None:
                 from .surface import update_surface
                 update_surface(self.surface,self.pool,self.source,self.config,0)
@@ -115,10 +135,16 @@ class FlowSolver:
             self.stats.contact_samples=self.prepared.contact.sample_count
             self.stats.coarsening_factor=self.prepared.chart.coarsening_factor
             self.stats.unrepresented_volume=float(self.field.unsupported.numpy()[0])
-            if self._field_step is not None:
-                self.stats.field_ms=self._field_step.field_ms
-                self.stats.contact_ms=self._field_step.contact_ms
-                self.stats.aggregation_ms=self._field_step.aggregation_ms
+            # Stage times sum over every interval this seek processed, like solver_ms.
+            stages = dict.fromkeys(('advance','aggregation','resample','deposit'),0.)
+            for name,begin_event,end_event in events:
+                stages[name]+=wp.get_event_elapsed_time(begin_event,end_event,synchronize=False)
+            self.stats.field_ms=field_ms
+            self.stats.contact_ms=max(0.,stages['advance']-field_ms)
+            self.stats.aggregation_ms=stages['aggregation']
+            self.stats.resample_ms=stages['resample']
+            self.stats.deposit_ms=stages['deposit']
+            self.stats.owned_array_bytes=owned_array_bytes(self.pool,self.field,self.prepared)
             if self.pool.field_motion is not None:
                 self.stats.contact_fallback_count=self.pool.field_motion.last_fallback_count
             if self.pool.field_aggregate is not None:

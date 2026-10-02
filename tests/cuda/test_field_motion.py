@@ -129,3 +129,16 @@ class FieldMotionTests(unittest.TestCase):
         stats=solver.seek(2)
         self.assertEqual(getattr(stats,'attached_count',None),1)
         self.assertEqual(getattr(stats,'free_count',None),1)
+
+    def test_reports_event_stage_timings_and_owned_bytes(self):
+        base=FlowConfig(solver_backend='FIELD',display_mode='POINTS',capacity=32,
+            source_start=0,source_softness=0,particles_per_frame=0,initial_coating_count=4,
+            field_spacing=.02,contact_spacing=.01,radius=.0001,resistance=0,surface_damping=0,
+            field_viscosity=0,surface_tension=0,gravity=(0,0,-1),merge_distance_scale=.25,resample_target=8)
+        solver=self.make(base); solver.seek(1); stats=solver.seek(3)
+        stages=[getattr(stats,name,-1.) for name in ('field_ms','contact_ms','aggregation_ms','resample_ms','deposit_ms')]
+        for value in stages: self.assertGreater(value,0.)
+        self.assertLessEqual(sum(stages),stats.solver_ms*1.01+.05)
+        owned=stats.owned_array_bytes
+        self.assertGreaterEqual(owned,solver.pool.capacity*12)
+        self.assertEqual(solver.seek(4).owned_array_bytes,owned)

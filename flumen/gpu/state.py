@@ -99,6 +99,8 @@ class FrameStats:
     contact_samples: int = 0
     attached_count: int = 0
     free_count: int = 0
+    resample_ms: float = 0.
+    deposit_ms: float = 0.
 
 
 class ParticlePool:
