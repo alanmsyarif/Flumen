@@ -220,7 +220,41 @@ collision surface's geometry and drops with filtered depth. Its
 Offscreen framebuffers are rebuilt each draw: cached ones silently lost depth
 testing in Blender 5.2.
 
-Suites: 109 Python, 80 CUDA and 74 Blender tests pass.
+Suites at that point: 109 Python, 80 CUDA and 74 Blender tests.
+
+### Rivulets, streams and wet coat (look work, 2026-10-02)
+
+- **Wet sheen (offline, cosmetic):** the film keeps a minimum thickness scaled by
+  the cached wetness, so drained areas stay a continuous thin coat instead of
+  breaking into patches. The added volume is reported as `sheen_volume` (0.35 uL
+  versus 15.8 uL of film at frame 180).
+- **Downhill film streaking:** this filter elongated thickness structure 2.7x in a
+  test but made no visible difference, so it was removed.
+- **Mesher drop trails:** rejected, because drops (median radius 0.12 mm, below the
+  0.4 mm grid) would need about 48x their real volume to be visible. Instead, free
+  vertices carry kernel-weighted particle velocity, and baked playback writes a
+  `velocity` attribute. Cycles motion blur then streaks falling drops into streams
+  (EEVEE ignores it).
+- **Film z-fighting:** the film's inner face lay exactly on the source, and Cycles
+  drew a maze pattern. The shell now floats 10 um off the surface
+  ([Cycles still](../artifacts/offline-look-cycles-f030.png)).
+- **Contact hysteresis (solver, opt-in):** dry nodes resist tangential acceleration
+  up to (sigma/rho) dcos (1-w)/(h L), and held nodes do not wet.
+  - The first version still let pinned nodes wet, which only produced uniform
+    creep.
+  - Sweep at 90 frames ([grid](../artifacts/rivulet-pinning-sweep.png): none, 0.05,
+    0.1, 0.2): 0.1 splits the front into tongues; 0.2 holds the water.
+  - At 0.07 over 180 frames, a central rivulet runs down the muzzle to the chin
+    with dry stripes beside it ([frames 60/90/120/180](../artifacts/rivulet-pinning-h07.png)).
+  - 1080p gates with 0.07 pass for all distributions: attached 35.0 FPS / p95
+    30.6 ms, free 44.7 / 23.7, mixed 41.9 / 24.7, dense 47.5 / 21.8
+    (`artifacts/particle-viewport-*-pinning.json`).
+  - A full combined clip was started, then stopped during meshing at user request.
+    No final clip with these settings exists.
+
+Suites: 112 Python, 81 CUDA and 75 Blender tests pass. The staged 0.0.4 package
+passes extension validation and both smoke runners, including FIELD bake,
+cancellation and CUDA-free playback.
 
 ## Fixture and reproduction
 

@@ -1,5 +1,22 @@
 # Implementation status — connected development and legacy releases
 
+## Particle preview and offline bake 0.0.4 (experimental), 2026-10-02
+
+Plan Tasks 1-9 are implemented:
+- Field Particle Preview with 1M-particle 1080p gates passing on the RTX 5050
+- explicit cancellable particle cache bake
+- CPU offline meshing with CUDA-free playback
+- optional screen-space Water preview
+- contact hysteresis for rivulets
+- wet sheen
+- velocity-attribute motion blur
+
+FIELD stays **experimental**: drainage against the reference fails at default
+settings, and no final clip with the latest look settings was rendered. Workflow,
+costs and limits are in [Particle preview and bake](PARTICLE_PREVIEW_AND_BAKE.md).
+Suites: 112 Python, 81 CUDA, 75 Blender. The staged package passes validation and
+both smoke runners. Nothing is pushed or published.
+
 ## Connected development checkpoint, 2026-10-02
 
 The development branch now has GPU surface interactions, conservative merging,

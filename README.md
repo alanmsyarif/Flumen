@@ -11,6 +11,15 @@ with final meshing deferred to a later bake. See the
 The packaged 0.0.3 workflow and measurements below describe the earlier Drops
 foundation; the development increment is not a new release.
 
+## Field particle preview and offline bake (0.0.4, experimental)
+
+Choose **Field Particle Preview** in **Sidebar > Flumen > GPU Flow** to simulate up
+to one million surface-water particles live on a stationary mesh. The live preview
+passes 1080p gates at 34-47 FPS on an RTX 5050. **Bake Particle Cache** writes the
+particles to disk, and **Mesh Particle Cache** turns them into renderable water
+that plays back without CUDA. See [Particle preview and bake](docs/PARTICLE_PREVIEW_AND_BAKE.md)
+for the workflow, measured costs and the failed reference-drainage gate.
+
 ## GPU Flow: continuous emission
 
 Install the Windows GPU extension built with the bundled Warp 1.17.0 wheel.
@@ -53,7 +62,7 @@ Open [Flumen_M1_Demo.blend](artifacts/Flumen_M1_Demo.blend). Play or scrub frame
 
 ## Install and create your own
 
-1. In Blender 5.2, use Preferences > Get Extensions > Install from Disk, selecting [flumen-0.0.2.zip](artifacts/flumen-0.0.2.zip).
+1. In Blender 5.2, use Preferences > Get Extensions > Install from Disk, selecting [flumen-0.0.4.zip](artifacts/flumen-0.0.4.zip).
 2. Select a stationary mesh. Set Scene Unit Scale to **1.0** (one Blender unit = one meter). The mesh needs height variation along Gravity; tilt a horizontal plane before setup.
 3. Open 3D View > Sidebar > Flumen. Choose **Create Animated Flow**, or **Build Flumen** for static paths.
 4. For animation, keep the new water host unparented with identity transforms. Tune inputs in its Geometry Nodes modifier and play sequentially from the start frame.
