@@ -159,7 +159,38 @@ stability) plus the new wall drag; a 0.1 mm film's terminal speed on a vertical
 wall is about g/(60+300) = 2.7 cm/s. Visual tuning is unfinished; the passing
 performance gates use these same settings.
 
-Suites: 90 Python, 80 CUDA and 68 Blender tests pass.
+### Particle cache and offline meshing (Tasks 7-8)
+
+Explicit bakes write validated particle caches (`flumen/particle_cache.py`):
+one SHA256-checked NumPy file per frame, about 88 MB per million particles.
+`flumen/offline_mesher.py` meshes caches on the CPU without CUDA: a film shell
+over a refined source lattice (conservative deposit through cached face/bary
+anchors) plus tiled marching-tetrahedra drops with crack-free tile seams.
+Baked playback and rendering run with CUDA initialization forbidden.
+
+[One million-particle frame](../artifacts/offline-mesh-probe.json) meshes in
+7.8 s at 1 mm film spacing (3.5M triangles, 84 MB, film volume error 0.5%).
+Later optimizations kept output byte-identical (SHA256 of frames 1/90/170)
+while a late drop-heavy frame went from 565 s to 93 s on one core, with
+frame-parallel workers on top.
+
+[180-frame clip](../artifacts/offline-clip.json): 250,000 particles with radius
+scaled to keep the million-particle fixture's water volume, 0.1 mm drop grid and
+2 mm film spacing. Mesh: 31 min on 6 workers (median 47.5 s, max 145 s per
+frame), 8.3 GB; cache 4.0 GB; renders 4.6 min (Workbench) and 6.1 min (EEVEE).
+Median film volume error 0.6%; at frame 180, 89% of free-drop volume meshed and
+11% was below grid resolution (reported, not lost). Stills:
+[opaque f180](../artifacts/offline-clip-opaque-f180.png),
+[water f060](../artifacts/offline-clip-water-f060.png),
+[water f180](../artifacts/offline-clip-water-f180.png); MP4s stay local.
+
+Against the reference bust the clip still fails visually: the crown film is
+smooth and connected and the front reaches the nose with one tongue, but
+drainage is far too slow, no distinct rivulets or hanging drips form, and thin
+film near the 10 um clip threshold renders speckled (noisy deposit with about
+ten particles per 2 mm node).
+
+Suites: 105 Python, 80 CUDA and 73 Blender tests pass.
 
 ## Fixture and reproduction
 

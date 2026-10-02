@@ -1,6 +1,10 @@
 # Saved checkpoint — million-particle field work
 
-**Updated 2026-10-02: revised Tasks 3-7 complete. Resume at Task 8 when requested.**
+**Updated 2026-10-02: revised Tasks 3-8 complete. Resume at Task 9 when requested.**
+
+Task 8: offline CPU mesher, CUDA-free baked playback and a 180-frame clip
+(250k particles). Visual reference gate still fails (slow drainage, no rivulets,
+speckled thin film). Local clip work (~12 GB) lives in `.clip-work/` (ignored).
 
 Task 7: validated particle caches (`flumen/particle_cache.py`, `flumen/gpu_bake.py`).
 A 1M-particle, 10-frame bake writes 884 MB (about 88 MB per frame) at 1.56 s
