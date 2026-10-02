@@ -192,9 +192,10 @@ def queue_count(mask: wp.array(dtype=int), prefix: wp.array(dtype=int), count: w
 
 
 @wp.kernel
-def compact_queue(mask: wp.array(dtype=int), prefix: wp.array(dtype=int), queue: wp.array(dtype=int)):
-    i=wp.tid()
-    if mask[i]==1: queue[prefix[i]]=i
+def compact_queue(mask: wp.array(dtype=int), prefix: wp.array(dtype=int), queue: wp.array(dtype=int),
+                  offset: int):
+    i=wp.tid(); slot=prefix[i]-offset
+    if mask[i]==1 and slot>=0 and slot<queue.shape[0]: queue[slot]=i
 
 
 @wp.kernel
@@ -286,11 +287,11 @@ def advance_field_particles(pool, prepared, buffers, config, dt: float, *, reuse
         array_scan(scratch.mask,scratch.prefix,inclusive=False)
         wp.launch(queue_count,1,inputs=[scratch.mask,scratch.prefix,scratch.count],device=pool.device)
         count=int(scratch.count.numpy()[0]); scratch.last_fallback_count=count
-        if count>len(scratch.queue):
-            raise RuntimeError(f'Contact fallback needs {count} particles, exceeding {len(scratch.queue)}; refine source/contact resolution')
-        if count:
-            wp.launch(compact_queue,pool.capacity,inputs=[scratch.mask,scratch.prefix,scratch.queue],device=pool.device)
-            wp.launch(exact_contacts,count,inputs=[pool.data,scratch.proposed,scratch.queue,prepared.source.mesh.id,
+        # Fixed-size chunks bound queue memory; each particle is resolved independently.
+        for offset in range(0,count,len(scratch.queue)):
+            chunk=min(len(scratch.queue),count-offset)
+            wp.launch(compact_queue,pool.capacity,inputs=[scratch.mask,scratch.prefix,scratch.queue,offset],device=pool.device)
+            wp.launch(exact_contacts,chunk,inputs=[pool.data,scratch.proposed,scratch.queue,prepared.source.mesh.id,
                 chart.source_adjacency_gpu,prepared.source.islands,config.capture_distance,config.capture_speed,
                 cos(config.normal_turn_limit*pi/180.),dt,scratch.unresolved,scratch.mask],device=pool.device)
         unresolved=int(scratch.unresolved.numpy()[0])

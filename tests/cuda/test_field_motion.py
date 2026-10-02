@@ -68,7 +68,7 @@ class FieldMotionTests(unittest.TestCase):
         self.assertAlmostEqual(float(solver.pool.data.position.numpy()[0,0]),.0202,delta=1e-6)
         self.assertEqual(int(solver.pool.data.state.numpy()[0]),0)
 
-    def test_thin_sheet_sweep_and_fallback_overflow(self):
+    def test_thin_sheet_sweep_and_chunked_fallback(self):
         solver=self.make(vertices=[[0,0,0],[.1,0,0],[0,.1,0]],triangles=[[0,1,2]])
         solver.seek(1)
         self.set_particles(solver,[[.02,.02,.01]],[[.6,.2]],states=[1],velocities=[[0,0,-1]])
@@ -80,10 +80,13 @@ class FieldMotionTests(unittest.TestCase):
         other.seek(1)
         count=65537
         self.set_particles(other,[[.02,.02,.00005]]*count,[[.6,.2]]*count,states=[1]*count)
-        before=other.pool.data.position.numpy().copy()
-        with self.assertRaises(RuntimeError): other.seek(2)
-        np.testing.assert_array_equal(other.pool.data.position.numpy(),before)
-        self.assertEqual(other.current_frame,1)
+        other.seek(2)
+        self.assertEqual(other.stats.contact_fallback_count,count)
+        positions=other.pool.data.position.numpy()
+        self.assertTrue(np.isfinite(positions).all())
+        self.assertGreaterEqual(float(positions[:,2].min()),0.)
+        # The final particle is in the second 65536 chunk; it must match the first exactly.
+        np.testing.assert_array_equal(positions[count-1],positions[0])
 
     def test_dense_merge_and_resampling(self):
         cfg=FlowConfig(solver_backend='FIELD',display_mode='POINTS',capacity=10000,
