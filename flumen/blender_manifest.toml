@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "flumen"
-version = "0.0.3"
+version = "0.0.4"
 name = "Flumen"
 tagline = "Surface drainage and live CUDA particle flow"
 maintainer = "Alan Syarif"
