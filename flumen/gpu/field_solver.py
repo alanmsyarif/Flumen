@@ -11,7 +11,7 @@ from .surface_chart import chart_anchor
 
 @wp.kernel
 def contribution_keys(d: ParticleArrays, triangles: wp.array(dtype=wp.vec3i), level: int,
-                      source_faces: int, keys: wp.array(dtype=wp.int64), values: wp.array(dtype=int),
+                      source_faces: int, keys: wp.array(dtype=int), values: wp.array(dtype=int),
                       amounts: wp.array(dtype=wp.float64), momentum: wp.array(dtype=wp.vec3d),
                       unsupported: wp.array(dtype=wp.float64)):
     i = wp.tid()
@@ -25,12 +25,12 @@ def contribution_keys(d: ParticleArrays, triangles: wp.array(dtype=wp.vec3i), le
         nodes = triangles[child]
     elif d.active[i] == 1 and d.state[i] == 0:
         wp.atomic_add(unsupported,0,wp.float64(d.volume[i]))
-    stride = wp.int64(d.active.shape[0]*3)
+    # Stable radix sort keeps ascending contribution index within each node.
     for k in range(3):
         index = 3*i+k
         node = nodes[k]
         if node < 0: node = 2147483647
-        keys[index] = wp.int64(node)*stride+wp.int64(index)
+        keys[index] = node
         values[index] = index
         volume = wp.float64(d.volume[i])*wp.float64(weights[k])
         amounts[index] = volume
@@ -39,30 +39,30 @@ def contribution_keys(d: ParticleArrays, triangles: wp.array(dtype=wp.vec3i), le
 
 
 @wp.kernel
-def node_ranges(keys: wp.array(dtype=wp.int64), count: int,
+def node_ranges(keys: wp.array(dtype=int), count: int,
                 starts: wp.array(dtype=int), ends: wp.array(dtype=int)):
     i = wp.tid()
-    node = int(keys[i]//wp.int64(count))
+    node = keys[i]
     if node >= starts.shape[0]: return
-    if i == 0 or keys[i-1]//wp.int64(count) != wp.int64(node): starts[node] = i
-    if i == count-1 or keys[i+1]//wp.int64(count) != wp.int64(node): ends[node] = i+1
+    if i == 0 or keys[i-1] != node: starts[node] = i
+    if i == count-1 or keys[i+1] != node: ends[node] = i+1
 
 
 @wp.kernel
-def segment_partials(keys: wp.array(dtype=wp.int64), values: wp.array(dtype=int),
+def segment_partials(keys: wp.array(dtype=int), values: wp.array(dtype=int),
                      amounts: wp.array(dtype=wp.float64), incoming: wp.array(dtype=wp.vec3d),
                      partial_volume: wp.array(dtype=wp.float64), partial_momentum: wp.array(dtype=wp.vec3d),
                      count: int):
     # Each fixed 256-entry chunk has <=256 runs. Only run starts walk a local run.
     i = wp.tid()
-    node = keys[i]//wp.int64(count)
+    node = keys[i]
     partial_volume[i] = wp.float64(0.)
     partial_momentum[i] = wp.vec3d(0.)
-    if i%256 != 0 and keys[i-1]//wp.int64(count) == node: return
+    if i%256 != 0 and keys[i-1] == node: return
     end = wp.min(count, (i//256+1)*256)
     total = wp.float64(0.); vector = wp.vec3d(0.)
     for j in range(i,end):
-        if keys[j]//wp.int64(count) != node: break
+        if keys[j] != node: break
         index = values[j]
         total += amounts[index]; vector += incoming[index]
     partial_volume[i] = total; partial_momentum[i] = vector
@@ -116,7 +116,7 @@ class FieldBuffers:
     def reserve(self, capacity):
         if self.capacity == capacity: return
         count = capacity*3
-        self.keys = wp.empty(count*2,dtype=wp.int64,device=self.device)
+        self.keys = wp.empty(count*2,dtype=int,device=self.device)
         self.values = wp.empty(count*2,dtype=int,device=self.device)
         self.amounts = wp.empty(count,dtype=wp.float64,device=self.device)
         self.incoming = wp.empty(count,dtype=wp.vec3d,device=self.device)
