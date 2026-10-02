@@ -1,6 +1,13 @@
 # Saved checkpoint — million-particle field work
 
-**Updated 2026-10-02: revised Task 3 complete. Resume at Task 4 when requested.**
+**Updated 2026-10-02: revised Tasks 3-6 complete. Resume at Task 7 when requested.**
+
+Task 6 outcome: all four 1080p million-particle viewport gates pass with
+background GPU apps closed; the drainage comparison against the reference
+fails (too slow, no rivulets). Details and user rulings (drip release,
+thin-film wall drag, fixed field substeps, chunked fallback) are in
+`docs/CONNECTED_WATER_VALIDATION.md` and the native ledger. Visual tuning of
+drainage is an open item to schedule with the user.
 
 The revised [design](../specs/2026-10-01-million-particle-preview-design.md) and
 [plan](../plans/2026-10-01-million-particle-preview.md) are both approved. Native
