@@ -160,3 +160,25 @@ class FieldMotionTests(unittest.TestCase):
         for name in ('position','velocity','normal','bary','volume'):
             self.assertTrue(np.isfinite(getattr(d,name).numpy()[active]).all(),name)
         np.testing.assert_allclose(d.volume.numpy()[active].sum(),4e-12,rtol=1e-6)
+
+    def test_underside_film_beyond_capillary_length_drips(self):
+        from flumen.gpu.field_solver import deposit_attached
+        base=replace(self.make().config,gravity=(0,0,-9.81),surface_tension=.072,capacity=8)
+        square=[[0,0,0],[.1,0,0],[0,.1,0],[.1,.1,0]]
+        outcomes={}
+        for label,triangles,total in (('thick_down',[[0,2,1],[1,2,3]],5e-5),('thin_down',[[0,2,1],[1,2,3]],2e-7),
+                                      ('thick_up',[[0,1,2],[1,3,2]],5e-5)):
+            solver=self.make(base,square,triangles); solver.seek(1)
+            count=8; normal=[0,0,-1] if label.endswith('down') else [0,0,1]
+            self.set_particles(solver,[[.03+.005*k,.04,0] for k in range(count)],[[.3,.3]]*count,
+                               volumes=[total/count]*count)
+            solver.pool.data.normal.assign([normal]*count)
+            deposit_attached(solver.pool,solver.prepared,solver.field)
+            solver.seek(2)
+            d=solver.pool.data; active=d.active.numpy()==1
+            outcomes[label]=(d.state.numpy()[active],d.position.numpy()[active])
+        states,positions=outcomes['thick_down']
+        self.assertTrue((states==1).all())
+        self.assertTrue((positions[:,2]<0).all())
+        self.assertTrue((outcomes['thin_down'][0]==0).all())
+        self.assertTrue((outcomes['thick_up'][0]==0).all())

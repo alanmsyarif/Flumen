@@ -1,5 +1,5 @@
 """Transactional local-chart transport and bounded provenance-aware contacts."""
-from math import cos, pi
+from math import cos, pi, sqrt
 from time import perf_counter
 import warp as wp
 import numpy as np
@@ -132,6 +132,7 @@ def triangle_contact(mesh: wp.uint64, face: int, start: wp.vec3, end: wp.vec3,
 def transport(d: ParticleArrays, proposed: ParticleArrays, mesh: wp.uint64,
               adjacency: wp.array(dtype=int,ndim=2), source_islands: wp.array(dtype=int),
               chart_triangles: wp.array(dtype=wp.vec3i), level: int, field_velocity: wp.array(dtype=wp.vec3),
+              field_thickness: wp.array(dtype=float), capillary_length: float,
               low: wp.vec3, dims: wp.vec3i, spacing: float, distances: wp.array(dtype=float),
               contact_faces: wp.array(dtype=int), ambiguity: wp.array(dtype=int),
               gravity: wp.vec3, adhesion: float, capture_speed: float, turn: float, dt: float,
@@ -147,7 +148,10 @@ def transport(d: ParticleArrays, proposed: ParticleArrays, mesh: wp.uint64,
         nodes=chart_triangles[child]
         velocity=tangent(field_velocity[nodes[0]]*weights[0]+field_velocity[nodes[1]]*weights[1]+field_velocity[nodes[2]]*weights[2],normal)
         displacement=(tangent(old_velocity,normal)+velocity)*(.5*dt)
-        if wp.dot(gravity,normal)>adhesion:
+        # A hanging film thicker than the capillary length cannot hold; it releases as drops.
+        thickness=field_thickness[nodes[0]]*weights[0]+field_thickness[nodes[1]]*weights[1]+field_thickness[nodes[2]]*weights[2]
+        downward=wp.dot(wp.normalize(gravity),normal)
+        if wp.dot(gravity,normal)>adhesion or (downward>0. and thickness*downward>capillary_length):
             state=1; p+=displacement+normal*(radius+1.e-5)
         else:
             complete,p,velocity,normal,face,bary,state,limited,remaining=walk_chart(mesh,adjacency,face,bary,p,displacement,velocity,turn)
@@ -281,6 +285,7 @@ def advance_field_particles(pool, prepared, buffers, config, dt: float, *, reuse
         start=perf_counter(); scratch.unresolved.zero_()
         wp.launch(transport,pool.capacity,inputs=[pool.data,scratch.proposed,prepared.source.mesh.id,
             chart.source_adjacency_gpu,prepared.source.islands,chart.triangles_gpu,chart.level,buffers.velocity,
+            buffers.thickness,sqrt(config.surface_tension/(1000.*sqrt(sum(g*g for g in config.gravity)))),
             wp.vec3(*contact.low),wp.vec3i(*contact.dimensions),contact.effective_spacing,contact.distance,
             contact.faces,contact.ambiguity,wp.vec3(*config.gravity),config.adhesion,config.capture_speed,
             cos(config.normal_turn_limit*pi/180.),dt,scratch.mask],device=pool.device)
