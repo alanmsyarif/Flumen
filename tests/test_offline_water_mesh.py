@@ -182,3 +182,17 @@ def test_film_smoothing_closes_speckle_and_conserves_volume(tmp_path):
     assert abs(volumes[1]-volumes[0]) <= volumes[0]*1e-9
     assert holes[1] < holes[0]*.5
     with pytest.raises(ValueError): MeshOptions(spacing=.001, film_smoothing=-1)
+
+
+def test_free_drop_crop_reports_excluded_volume(tmp_path):
+    source = ([[0, 0, -.01], [.001, 0, -.01], [0, .001, -.01]], [[0, 1, 2]])
+    inside, outside = ((0, 0, 0), 1, 0, (.3, .3), DROP), ((0, 0, -1.), 1, 0, (.3, .3), 2*DROP)
+    reader = write_cache(tmp_path/'cache', *source, [0], [inside, outside])
+    full = mesh_cached_frame(reader, 1, MeshOptions(spacing=R/4), tmp_path/'full', lambda: False)
+    crop = mesh_cached_frame(reader, 1, MeshOptions(spacing=R/4, free_crop=((-.1, -.1, -.1), (.1, .1, .1))),
+                             tmp_path/'crop', lambda: False)
+    assert crop['cropped_volume'] == pytest.approx(2*DROP) and full['cropped_volume'] == 0
+    alone = mesh_cached_frame(write_cache(tmp_path/'alone', *source, [0], [inside]), 1, MeshOptions(spacing=R/4),
+                              tmp_path/'alone_mesh', lambda: False)
+    assert crop['tiles'] < full['tiles'] and crop['free_triangles'] == alone['free_triangles'] < full['free_triangles']
+    with pytest.raises(ValueError): MeshOptions(spacing=.001, free_crop=((0, 0, 0), (-1, 0, 0)))

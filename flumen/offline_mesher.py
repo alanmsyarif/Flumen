@@ -38,6 +38,7 @@ class MeshOptions:
     min_thickness: float = 1e-5
     max_triangles: int = 20_000_000
     film_smoothing: int = 0        # volume-conserving diffusion steps on deposited film thickness
+    free_crop: tuple = None        # ((x, y, z) low, (x, y, z) high): free drops outside are skipped and reported
 
     def __post_init__(self):
         for value in (self.spacing, self.film_spacing, self.min_thickness):
@@ -47,6 +48,10 @@ class MeshOptions:
         if self.max_triangles < 1: raise ValueError('Triangle budget must be positive')
         if isinstance(self.film_smoothing, bool) or not isinstance(self.film_smoothing, int) or self.film_smoothing < 0:
             raise ValueError('Film smoothing must be a nonnegative integer')
+        if self.free_crop is not None:
+            low, high = (np.asarray(corner, float) for corner in self.free_crop)
+            if low.shape != (3,) or high.shape != (3,) or not (np.isfinite(low).all() and np.isfinite(high).all() and (low < high).all()):
+                raise ValueError('Free crop needs finite low < high corners')
 
 
 def chart_anchor(faces, bary, level):
@@ -293,8 +298,12 @@ class _SurfaceBarrier:
         return result
 
 
-def _free_particles(cached, settings):
+def _free_particles(cached, settings, crop=None):
     a = cached.arrays; free = a['state'] == 1
+    cropped = 0.
+    if crop is not None:
+        inside = ((a['position'] >= crop[0]) & (a['position'] <= crop[1])).all(1)
+        cropped = float(a['volume'][free & ~inside].astype(np.float64).sum()); free &= inside
     p = a['position'][free].astype(np.float64); volume = a['volume'][free].astype(np.float64)
     velocity = a['velocity'][free].astype(np.float64)
     radius = np.cbrt(volume*.238732414637843); support = 2.*radius
@@ -302,7 +311,7 @@ def _free_particles(cached, settings):
     speed = np.linalg.norm(velocity, axis=1)
     axial = np.clip(1.+speed*.02/nominal, 1., AXIAL_MAX) if nominal else np.ones(len(p))
     axis = np.where(speed[:, None] > 1e-9, velocity/np.maximum(speed, 1e-30)[:, None], [0., 0., 1.])
-    return p, volume, radius, support, axial, axis
+    return (p, volume, radius, support, axial, axis), cropped
 
 
 def _tile_field(tile, particles, members, origin, pitch, T):
@@ -395,10 +404,10 @@ def _contour(field, tile, origin, pitch, T, dims):
 
 
 def _free_tiles(static, cached, options, settings, stats):
-    particles = _free_particles(cached, settings)
+    particles, cropped = _free_particles(cached, settings, options.free_crop)
     p, volume, radius, support, axial, _ = particles
     stats.update(free_volume=float(volume.sum()), subresolution_volume=float(volume[radius < options.spacing].sum()),
-                 tiles=0, max_tile_cells=0)
+                 cropped_volume=cropped, tiles=0, max_tile_cells=0)
     if not len(p): return
     pitch, T = options.spacing, options.tile_cells
     extent = (support*axial)[:, None]
@@ -493,7 +502,8 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
         attached_mesh_volume=film.diagnostics['mesh_volume'], attached_excluded_volume=film.diagnostics['excluded_volume'],
         unanchored_volume=film.diagnostics['unanchored_volume'],
         free_volume=stats.get('free_volume', 0.), free_mesh_volume=free_volume,
-        subresolution_volume=stats.get('subresolution_volume', 0.), tiles=stats.get('tiles', 0),
+        subresolution_volume=stats.get('subresolution_volume', 0.), cropped_volume=stats.get('cropped_volume', 0.),
+        tiles=stats.get('tiles', 0),
         max_tile_cells=stats.get('max_tile_cells', 0), attached_triangles=len(film.triangles),
         free_triangles=len(free_triangles), seconds=perf_counter()-started)
 

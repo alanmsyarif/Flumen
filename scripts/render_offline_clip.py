@@ -77,6 +77,8 @@ def main():
     parser.add_argument('--water-scale',type=float,default=1.,help='Particle radius multiplier on top of the 1M-volume radius')
     parser.add_argument('--film-spacing',type=float,default=.002)
     parser.add_argument('--film-smoothing',type=int,default=6)
+    parser.add_argument('--free-crop',type=float,nargs=6,default=[-.3,-.3,-.02,.3,.3,.4],
+                        help='Mesh free drops only inside x0 y0 z0 x1 y1 z1 (meters); out-of-shot drops are reported')
     parser.add_argument('--workers',type=int,default=max(1,min(12,(os.cpu_count() or 2)//2)))
     parser.add_argument('--reuse-cache',action='store_true',help='Mesh an existing complete cache instead of rebaking')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
@@ -91,7 +93,7 @@ def main():
     scene.frame_end=args.frames
     source=host.flumen_gpu.source
     report=dict(measurement_kind='offline_clip',particles=args.count,frames=args.frames,particle_radius=radius,water_scale=args.water_scale,
-                drop_spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing)
+                drop_spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing,free_crop=args.free_crop)
     if args.reuse_cache:
         cached=CacheReader(args.work/'cache')
         if cached.header.frame_count!=args.frames: raise ValueError('Existing cache has a different frame range')
@@ -103,7 +105,8 @@ def main():
     bpy.data.objects.remove(host,do_unlink=True); runtime.release_all()
     reader=CacheReader(args.work/'cache'); t=time.perf_counter(); frames=[]
     report['workers']=args.workers
-    for result in iter_mesh_cache(reader,MeshOptions(spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing),args.work/'mesh',args.workers):
+    for result in iter_mesh_cache(reader,MeshOptions(spacing=args.drop_spacing,film_spacing=args.film_spacing,film_smoothing=args.film_smoothing,
+                                               free_crop=(tuple(args.free_crop[:3]),tuple(args.free_crop[3:]))),args.work/'mesh',args.workers):
         frames.append(result)
         if result['frame'] in STILLS: print('MESHED',json.dumps({k:result[k] for k in ('frame','seconds','attached_triangles','free_triangles')}),flush=True)
     report.update(mesh_seconds=time.perf_counter()-t,mesh_bytes=folder_bytes(args.work/'mesh'),mesh_frames=frames)
