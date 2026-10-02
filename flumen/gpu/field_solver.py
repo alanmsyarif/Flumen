@@ -1,7 +1,7 @@
 """Conservative anchor-to-field transfer with deterministic bounded reductions."""
 import numpy as np
 from dataclasses import dataclass
-from math import ceil, sqrt, isfinite
+from math import isfinite
 from time import perf_counter
 import warp as wp
 from warp.utils import radix_sort_pairs
@@ -107,7 +107,7 @@ class FieldBuffers:
         self.triangle_gradient = wp.zeros(len(chart.triangles),dtype=wp.vec3,device=device)
         self.rhs = wp.zeros(count,dtype=wp.vec3,device=device)
         self.velocity_temp = wp.zeros(count,dtype=wp.vec3,device=device)
-        self.metrics = wp.zeros(3,dtype=wp.float64,device=device)
+        self.metrics = wp.zeros(4,dtype=wp.float64,device=device)
         self.force_limited = wp.zeros(1,dtype=int,device=device)
         self.capacity = 0
         self.graphs = {}
@@ -156,14 +156,20 @@ class FieldStep:
     field_ms: float = 0.
     contact_ms: float = 0.
     aggregation_ms: float = 0.
+    courant: float = 0.
 
 
 @wp.kernel
 def measure_field(height: wp.array(dtype=float), velocity: wp.array(dtype=wp.vec3),
                   volume: wp.array(dtype=wp.float64), metrics: wp.array(dtype=wp.float64)):
     i = wp.tid()
+    speed = wp.length(velocity[i])
+    # atomic_max ignores NaN, so nonfinite nodes are counted explicitly.
+    if not (wp.isfinite(height[i]) and wp.isfinite(speed)):
+        wp.atomic_add(metrics,3,wp.float64(1.))
+        return
     wp.atomic_max(metrics,0,wp.float64(height[i]))
-    wp.atomic_max(metrics,1,wp.float64(wp.length(velocity[i])))
+    wp.atomic_max(metrics,1,wp.float64(speed))
     wp.atomic_add(metrics,2,volume[i])
 
 
@@ -252,14 +258,14 @@ def evolve_field(prepared, buffers: FieldBuffers, config, dt: float, *, use_grap
     buffers.metrics.zero_()
     wp.launch(measure_field,len(chart.vertices),inputs=[buffers.thickness,buffers.velocity,
         buffers.volume,buffers.metrics],device=buffers.device)
-    height,speed,volume = buffers.metrics.numpy()
-    wave = sqrt(max(0.,np.linalg.norm(config.gravity)*height))
-    capillary_wave = sqrt(config.surface_tension/(1000.*chart.operator_spacing))
-    needed = max(1,ceil(dt*(speed+wave+capillary_wave)/(.25*chart.operator_spacing)))
-    if needed > 64:
-        raise RuntimeError(f'Field stability requires {needed} steps, exceeding 64; refine time settings')
-    # Round upward only: seven bounded graph variants, each at least as conservative.
-    needed = 1 << (needed-1).bit_length()
+    height,speed,volume,nonfinite = buffers.metrics.numpy()
+    if nonfinite or not all(isfinite(float(value)) for value in (height,speed,volume)):
+        raise RuntimeError('Field state became nonfinite; interval was not committed')
+    # Thickness is frozen within an interval: forcing is constant, the drag kick is exact
+    # and viscosity is implicit, so substeps only refine operator splitting. Wave speeds
+    # do not constrain them; the Courant number of the interval is reported instead.
+    needed = config.minimum_substeps
+    courant = float(speed)*dt/chart.operator_spacing
     if use_graph:
         key = (needed,dt,config.gravity,config.surface_tension,config.repulsion_acceleration,
                config.cohesion_acceleration,config.resistance,config.surface_damping,
@@ -280,7 +286,7 @@ def evolve_field(prepared, buffers: FieldBuffers, config, dt: float, *, use_grap
         _evolve_kernels(chart,buffers,config,needed,dt)
     limited = int(buffers.force_limited.numpy()[0])
     unsupported = float(buffers.unsupported.numpy()[0])
-    return FieldStep(needed,float(volume),unsupported,limited,(perf_counter()-start)*1000)
+    return FieldStep(needed,float(volume),unsupported,limited,(perf_counter()-start)*1000,courant=courant)
 
 
 def _evolve_kernels(chart, buffers, config, needed, dt):

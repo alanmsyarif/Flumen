@@ -110,6 +110,7 @@ class FrameStats:
     free_count: int = 0
     resample_ms: float = 0.
     deposit_ms: float = 0.
+    field_courant: float = 0.
 
 
 class ParticlePool:

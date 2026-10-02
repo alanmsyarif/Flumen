@@ -65,7 +65,7 @@ class FieldDynamicsTests(unittest.TestCase):
             drag=5+3e-6/height**2
             np.testing.assert_allclose(b.velocity.numpy()[:,2],-(1-np.exp(-drag))/drag,rtol=1e-3)
 
-    def test_capillary_response_and_step_limit(self):
+    def test_capillary_response_and_substep_guard(self):
         p,b,cfg=self.make()
         height=np.full(len(p.chart.vertices),.001,np.float32)
         peak=int(np.argmin(np.sum((p.chart.vertices-[.025,.025,0])**2,axis=1)))
@@ -75,9 +75,16 @@ class FieldDynamicsTests(unittest.TestCase):
         radial=p.chart.vertices-p.chart.vertices[peak]
         self.assertGreater(float(np.sum(radial*b.velocity.numpy())),0.)
         self.assertTrue(np.isfinite(b.velocity.numpy()).all())
-        self.assertLessEqual(step.substeps,64)
+        # Thickness is frozen within an interval, so substeps only resolve the velocity ODE.
+        self.assertEqual(step.substeps,cfg.minimum_substeps)
+        speed=float(np.linalg.norm(b.velocity.numpy(),axis=1).max())
+        large=self.evolve(p,b,cfg,1.)
+        self.assertEqual(large.substeps,cfg.minimum_substeps)
+        np.testing.assert_allclose(large.courant,speed/p.chart.operator_spacing,rtol=1e-5)
+        self.assertTrue(np.isfinite(b.velocity.numpy()).all())
         before=b.velocity.numpy().copy(); wet=b.wetness.numpy().copy()
-        with self.assertRaises(RuntimeError): self.evolve(p,b,cfg,1000.)
+        height[0]=np.nan; b.thickness.assign(height)
+        with self.assertRaisesRegex(RuntimeError,'nonfinite'): self.evolve(p,b,cfg,.001)
         np.testing.assert_array_equal(b.velocity.numpy(),before)
         np.testing.assert_array_equal(b.wetness.numpy(),wet)
 
