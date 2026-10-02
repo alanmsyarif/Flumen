@@ -3,7 +3,7 @@ from hashlib import sha256
 import numpy as np
 import pytest
 from flumen.particle_cache import CacheHeader, CachedFrame, CacheWriter, CacheReader, PARTICLE_FIELDS, SCHEMA_VERSION
-from flumen.offline_mesher import MeshOptions, iter_mesh_tiles, mesh_cached_frame, mesh_cache_sequence
+from flumen.offline_mesher import MeshOptions, iter_mesh_tiles, mesh_cached_frame, mesh_cache_sequence, FILM_GAP
 
 R = 2e-4
 DROP = 4/3*np.pi*R**3
@@ -235,7 +235,7 @@ def test_film_cap_turns_pooled_water_into_a_pendant_drop(tmp_path):
                                tmp_path/'capped', lambda: False)
     a = np.load(tmp_path/'spike'/spike['file']); b = np.load(tmp_path/'capped'/capped['file'])
     assert a['attached_vertices'][:, 2].max() > .01                         # uncapped: >1 cm spike
-    assert b['attached_vertices'][:, 2].max() <= .002+1e-6                  # capped film
+    assert b['attached_vertices'][:, 2].max() <= .002+FILM_GAP+1e-6         # capped film (floated off the source)
     assert len(b['free_triangles']) > 0 and closed(b['free_triangles'])     # pooled water became a drop
     assert capped['pooled_volume'] > 0
     total = capped['attached_represented_volume']+capped['pooled_volume']
@@ -265,3 +265,11 @@ def test_free_vertices_carry_drop_velocity_for_motion_blur(tmp_path):
     mesh = np.load(tmp_path/'mesh'/result['file'])
     assert len(mesh['free_vertices']) and mesh['free_velocity'].shape == mesh['free_vertices'].shape
     assert np.allclose(mesh['free_velocity'], (.5, 0., -3.), atol=1e-5)
+
+
+def test_film_never_shares_a_plane_with_the_source(tmp_path):
+    # Coplanar film and source faces z-fight in path tracers (maze pattern).
+    reader = write_cache(tmp_path/'film', *SQUARE, [0, 0], film_particles())
+    result = mesh_cached_frame(reader, 1, MeshOptions(spacing=.001), tmp_path/'mesh', lambda: False)
+    z = np.load(tmp_path/'mesh'/result['file'])['attached_vertices'][:, 2]
+    assert len(z) and z.min() >= .99e-5

@@ -28,6 +28,7 @@ ISO = .3460693359375
 AXIAL_MAX = 4.**(2./3.)
 TETS = np.array([[0, 1, 3, 7], [0, 3, 2, 7], [0, 2, 6, 7], [0, 6, 4, 7], [0, 4, 5, 7], [0, 5, 1, 7]])
 CORNERS = np.array([[q % 2, (q//2) % 2, q//4] for q in range(8)])
+FILM_GAP = 1e-5   # meters
 
 
 @dataclass(frozen=True)
@@ -180,7 +181,8 @@ def _film(static, cached, options, lattice=None):
         sheen = np.maximum(options.film_sheen*wet*area-volume, 0.)
         volume = volume+sheen
     thickness = volume/area
-    mesh = _film_shell(lattice['positions'], lattice['normals'], thickness, lattice['tris'],
+    # Float the shell FILM_GAP off the source so the two never share a plane (path tracers z-fight).
+    mesh = _film_shell(lattice['positions']+FILM_GAP*lattice['normals'], lattice['normals'], thickness, lattice['tris'],
                        options.min_thickness, options.max_triangles)
     mesh_volume = _signed_volume(mesh.vertices, mesh.triangles)
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
