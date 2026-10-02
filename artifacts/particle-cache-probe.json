@@ -1,0 +1,38 @@
+{
+  "measurement_kind": "particle_cache_probe",
+  "frames": 10,
+  "particles": 1000000,
+  "live_count_frame5": 1000000,
+  "setup_seconds": 0.05004460003692657,
+  "bake_seconds": 21.8706212999532,
+  "median_frame_seconds": 1.3883461500518024,
+  "read_all_seconds": 9.559592799982056,
+  "cache_bytes": 884201909,
+  "estimated_bytes": 884570940,
+  "bytes_per_frame": 88420190.9,
+  "live_state_unchanged": true,
+  "frame5_matches_live_exactly": false,
+  "frame5_max_differences": {
+    "slot": 0.0,
+    "position": 2.9802322387695312e-08,
+    "velocity": 1.2293457984924316e-07,
+    "normal": 0.0,
+    "age": 0.0,
+    "volume": 0.0,
+    "state": 0.0,
+    "island": 0.0,
+    "face": 0.0,
+    "bary": 1.0669231414794922e-05,
+    "ids": 0.0,
+    "path": 0.0,
+    "limited": 0.0
+  },
+  "frame5_volume_totals": [
+    4.1887899399524475e-06,
+    4.1887899399524475e-06
+  ],
+  "memory": {
+    "peak_process_mib": 852.09375,
+    "whole_device_used_mib": 5690
+  }
+}

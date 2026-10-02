@@ -20,6 +20,28 @@ from flumen.gpu_runtime import extract_source
 from gpu_memory import memory_snapshot
 
 
+def apply_distribution(solver, distribution):
+    """Rearrange the frame-1 coating in place; volume and particle count are unchanged."""
+    if distribution=='attached': return
+    states=solver.pool.data.state.numpy()
+    positions=solver.pool.data.position.numpy()
+    if distribution=='free':
+        states[:]=1; positions[:,2]+=1.
+    elif distribution=='mixed':
+        states[::2]=1; positions[::2,2]+=1.
+    elif distribution=='dense':
+        # All particles concentrate at a real source anchor, not a decimated proxy.
+        positions[:]=positions[0]
+        for name in ('face','bary','island','normal'):
+            array=getattr(solver.pool.data,name); values=array.numpy(); values[:]=values[0]; array.assign(values)
+    else:
+        raise ValueError(f'Unknown distribution {distribution!r}')
+    solver.pool.data.state.assign(states); solver.pool.data.position.assign(positions)
+    if solver.field is not None:
+        from flumen.gpu.field_solver import deposit_attached
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--capacity',type=int,default=1_000_000)
@@ -56,36 +78,32 @@ def main():
         preparation_seconds=time.perf_counter()-prepare_start
         setup=time.perf_counter(); solver.seek(1)
         setup_seconds=time.perf_counter()-setup
-        if args.distribution!='attached':
-            import warp as wp
-            states=solver.pool.data.state.numpy()
-            positions=solver.pool.data.position.numpy()
-            if args.distribution=='free':
-                states[:]=1; positions[:,2]+=1.
-            elif args.distribution=='mixed':
-                states[::2]=1; positions[::2,2]+=1.
-            else:
-                # All particles concentrate at a real source anchor, not a decimated proxy.
-                positions[:]=positions[0]
-                for name in ('face','bary','island','normal'):
-                    array=getattr(solver.pool.data,name); values=array.numpy(); values[:]=values[0]; array.assign(values)
-            solver.pool.data.state.assign(states); solver.pool.data.position.assign(positions)
-            if solver.field is not None:
-                from flumen.gpu.field_solver import deposit_attached
-                deposit_attached(solver.pool,solver.prepared,solver.field)
-        for frame in range(2,2+args.warmup): solver.seek(frame)
-        samples=[]; stages=[]
-        for frame in range(2+args.warmup,2+args.warmup+args.frames):
-            start=time.perf_counter(); solver.seek(frame)
-            elapsed=(time.perf_counter()-start)*1000
-            samples.append(elapsed); stages.append(asdict(solver.stats))
-            print('PARTICLE_SOLVER_FRAME',frame,round(elapsed,2),solver.stats.live_count,flush=True)
+        apply_distribution(solver,args.distribution)
+        samples=[]; stages=[]; frame=1
+        try:
+            for frame in range(2,2+args.warmup): solver.seek(frame)
+            for frame in range(2+args.warmup,2+args.warmup+args.frames):
+                start=time.perf_counter(); solver.seek(frame)
+                elapsed=(time.perf_counter()-start)*1000
+                samples.append(elapsed); stages.append(asdict(solver.stats))
+                print('PARTICLE_SOLVER_FRAME',frame,round(elapsed,2),solver.stats.live_count,flush=True)
+        except RuntimeError as error:
+            # Bounded solver failures are evidence too; keep the last committed state.
+            report=dict(measurement_kind='solver_only_feasibility',viewport_tested=False,status='failed',
+                backend=args.backend,distribution=args.distribution,failed_frame=frame,error=str(error),
+                warmup_frames=args.warmup,samples_ms=samples,stages=stages,
+                last_valid_stats=asdict(solver.stats) if solver.stats else None,config=asdict(cfg),
+                blender=bpy.app.version_string,source_triangles=len(arrays[1]),memory=memory_snapshot())
+            output=args.output.resolve(); output.parent.mkdir(parents=True,exist_ok=True)
+            output.write_text(json.dumps(report,indent=2),encoding='utf8')
+            print('PARTICLE_SOLVER_FAILED',output,frame,error,flush=True)
+            raise
         ordered=sorted(samples)
         finite_state=bool(np.isfinite(solver.pool.data.position.numpy()).all()
                           and np.isfinite(solver.pool.data.velocity.numpy()).all())
         final=stages[-1]
         ledger_error=abs(final['emitted_volume']-final['live_volume']-final['removed_volume'])/max(final['emitted_volume'],1.e-20)
-        report=dict(measurement_kind='solver_only_feasibility',viewport_tested=False,
+        report=dict(measurement_kind='solver_only_feasibility',viewport_tested=False,status='passed',
             backend=args.backend,distribution=args.distribution,preparation_seconds=preparation_seconds,
             field_minimum_edge=solver.prepared.chart.min_edge if solver.prepared else None,
             field_operator_spacing=solver.prepared.chart.operator_spacing if solver.prepared else None,

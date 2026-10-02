@@ -8,6 +8,18 @@ from flumen.gpu.source import build_source
 from flumen.gpu.prepared import prepare_source
 from flumen.gpu.solver import FlowSolver
 
+import warp as wp
+from flumen.gpu.field_motion import ParticleArrays
+
+
+@wp.kernel
+def unresolved_contacts(d: ParticleArrays, proposed: ParticleArrays, queue: wp.array(dtype=int),
+                        mesh: wp.uint64, adjacency: wp.array(dtype=int,ndim=2), islands: wp.array(dtype=int),
+                        capture_distance: float, capture_speed: float, turn: float, dt: float,
+                        unresolved: wp.array(dtype=int), diagnostics: wp.array(dtype=int)):
+    # Stand-in for exact_contacts that fails every queued particle.
+    i=queue[wp.tid()]; diagnostics[i]=1; wp.atomic_add(unresolved,0,1)
+
 
 class FieldMotionTests(unittest.TestCase):
     def make(self, config=None, vertices=None, triangles=None):
@@ -68,7 +80,7 @@ class FieldMotionTests(unittest.TestCase):
         self.assertAlmostEqual(float(solver.pool.data.position.numpy()[0,0]),.0202,delta=1e-6)
         self.assertEqual(int(solver.pool.data.state.numpy()[0]),0)
 
-    def test_thin_sheet_sweep_and_fallback_overflow(self):
+    def test_thin_sheet_sweep_and_chunked_fallback(self):
         solver=self.make(vertices=[[0,0,0],[.1,0,0],[0,.1,0]],triangles=[[0,1,2]])
         solver.seek(1)
         self.set_particles(solver,[[.02,.02,.01]],[[.6,.2]],states=[1],velocities=[[0,0,-1]])
@@ -80,10 +92,13 @@ class FieldMotionTests(unittest.TestCase):
         other.seek(1)
         count=65537
         self.set_particles(other,[[.02,.02,.00005]]*count,[[.6,.2]]*count,states=[1]*count)
-        before=other.pool.data.position.numpy().copy()
-        with self.assertRaises(RuntimeError): other.seek(2)
-        np.testing.assert_array_equal(other.pool.data.position.numpy(),before)
-        self.assertEqual(other.current_frame,1)
+        other.seek(2)
+        self.assertEqual(other.stats.contact_fallback_count,count)
+        positions=other.pool.data.position.numpy()
+        self.assertTrue(np.isfinite(positions).all())
+        self.assertGreaterEqual(float(positions[:,2].min()),0.)
+        # The final particle is in the second 65536 chunk; it must match the first exactly.
+        np.testing.assert_array_equal(positions[count-1],positions[0])
 
     def test_dense_merge_and_resampling(self):
         cfg=FlowConfig(solver_backend='FIELD',display_mode='POINTS',capacity=10000,
@@ -129,3 +144,89 @@ class FieldMotionTests(unittest.TestCase):
         stats=solver.seek(2)
         self.assertEqual(getattr(stats,'attached_count',None),1)
         self.assertEqual(getattr(stats,'free_count',None),1)
+
+    def test_reports_event_stage_timings_and_owned_bytes(self):
+        base=FlowConfig(solver_backend='FIELD',display_mode='POINTS',capacity=32,
+            source_start=0,source_softness=0,particles_per_frame=0,initial_coating_count=4,
+            field_spacing=.02,contact_spacing=.01,radius=.0001,resistance=0,surface_damping=0,
+            field_viscosity=0,surface_tension=0,gravity=(0,0,-1),merge_distance_scale=.25,resample_target=8)
+        solver=self.make(base); solver.seek(1); stats=solver.seek(3)
+        stages=[getattr(stats,name,-1.) for name in ('field_ms','contact_ms','aggregation_ms','resample_ms','deposit_ms')]
+        for value in stages: self.assertGreater(value,0.)
+        self.assertLessEqual(sum(stages),stats.solver_ms*1.01+.05)
+        owned=stats.owned_array_bytes
+        self.assertGreaterEqual(owned,solver.pool.capacity*12)
+        self.assertEqual(solver.seek(4).owned_array_bytes,owned)
+
+    def test_free_merge_with_opposing_or_zero_normals_stays_finite(self):
+        from flumen.gpu.field_aggregate import aggregate_field_particles
+        cfg=replace(self.make().config,merge_distance_scale=.25)
+        solver=self.make(cfg); solver.seek(1)
+        point=[.05,.05,.5]
+        self.set_particles(solver,[point]*4,[[.3,.3]]*4,states=[1]*4)
+        solver.pool.data.normal.assign([[0,0,1],[0,0,-1],[0,0,0],[0,0,0]]+[[0,0,0]]*(solver.pool.capacity-4))
+        solver.pool.data.island.assign([0]*solver.pool.capacity)
+        aggregate_field_particles(solver.pool,solver.prepared,solver.config)
+        d=solver.pool.data; active=d.active.numpy()==1
+        self.assertEqual(int(active.sum()),2)
+        for name in ('position','velocity','normal','bary','volume'):
+            self.assertTrue(np.isfinite(getattr(d,name).numpy()[active]).all(),name)
+        np.testing.assert_allclose(d.volume.numpy()[active].sum(),4e-12,rtol=1e-6)
+
+    def test_underside_film_beyond_capillary_length_drips(self):
+        from flumen.gpu.field_solver import deposit_attached
+        base=replace(self.make().config,gravity=(0,0,-9.81),surface_tension=.072,capacity=8)
+        square=[[0,0,0],[.1,0,0],[0,.1,0],[.1,.1,0]]
+        outcomes={}
+        for label,triangles,total in (('thick_down',[[0,2,1],[1,2,3]],5e-5),('thin_down',[[0,2,1],[1,2,3]],2e-7),
+                                      ('thick_up',[[0,1,2],[1,3,2]],5e-5)):
+            solver=self.make(base,square,triangles); solver.seek(1)
+            count=8; normal=[0,0,-1] if label.endswith('down') else [0,0,1]
+            self.set_particles(solver,[[.03+.005*k,.04,0] for k in range(count)],[[.3,.3]]*count,
+                               volumes=[total/count]*count)
+            solver.pool.data.normal.assign([normal]*count)
+            deposit_attached(solver.pool,solver.prepared,solver.field)
+            solver.seek(2)
+            d=solver.pool.data; active=d.active.numpy()==1
+            outcomes[label]=(d.state.numpy()[active],d.position.numpy()[active])
+        states,positions=outcomes['thick_down']
+        self.assertTrue((states==1).all())
+        self.assertTrue((positions[:,2]<0).all())
+        self.assertTrue((outcomes['thin_down'][0]==0).all())
+        self.assertTrue((outcomes['thick_up'][0]==0).all())
+
+    def test_deposit_counts_only_attached_particles(self):
+        from flumen.gpu.field_solver import deposit_attached
+        solver=self.make(); solver.seek(1)
+        positions=[[.02,0,.02],[.03,0,.03],[.04,0,.02],[.2,.2,.2]]
+        self.set_particles(solver,positions,[[.6,.2],[.3,.3],[.2,.6],[.3,.3]],states=[0,1,0,1],
+                           volumes=[2e-12,5e-12,3e-12,7e-12])
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+        self.assertAlmostEqual(float(solver.field.volume.numpy().sum()),5e-12,delta=5e-18)  # float32 volumes
+        solver.pool.data.active.assign([0]*solver.pool.capacity)
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+        self.assertEqual(float(solver.field.volume.numpy().sum()),0.)
+        self.assertEqual(float(solver.field.thickness.numpy().max()),0.)
+
+    def test_unresolved_contact_commits_nothing(self):
+        from flumen.gpu import field_motion
+        solver=self.make(vertices=[[0,0,0],[.1,0,0],[0,.1,0],[0,0,.0001],[.1,0,.0001],[0,.1,.0001]],
+                         triangles=[[0,1,2],[3,5,4]])
+        solver.seek(1)
+        self.set_particles(solver,[[.02,.02,.00005]]*2+[[.05,.05,0]],[[.6,.2]]*2+[[.3,.3]],states=[1,1,0])
+        solver.field.wetness.fill_(.25); solver.field.velocity.fill_(.5)
+        d=solver.pool.data
+        before={name:getattr(d,name).numpy().copy() for name in ('position','velocity','face','bary','state','volume','ids','active')}
+        ledger=solver.pool.ledger.numpy().copy(); next_id=solver.pool.next_id
+        wet=solver.field.wetness.numpy().copy(); field_velocity=solver.field.velocity.numpy().copy()
+        original=field_motion.exact_contacts; field_motion.exact_contacts=unresolved_contacts
+        try:
+            with self.assertRaisesRegex(RuntimeError,'unresolved'): solver.seek(2)
+        finally:
+            field_motion.exact_contacts=original
+        for name,value in before.items(): np.testing.assert_array_equal(getattr(d,name).numpy(),value,err_msg=name)
+        np.testing.assert_array_equal(solver.pool.ledger.numpy(),ledger)
+        self.assertEqual(solver.pool.next_id,next_id)
+        np.testing.assert_array_equal(solver.field.wetness.numpy(),wet)
+        np.testing.assert_array_equal(solver.field.velocity.numpy(),field_velocity)
+        self.assertEqual(solver.current_frame,1)

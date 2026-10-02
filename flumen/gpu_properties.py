@@ -15,9 +15,28 @@ def material_changed(self, context):
     set_material(self.id_data,self.material)
 
 
+def points_changed(self, context):
+    from .gpu_runtime import refresh_points
+    refresh_points(self.id_data)
+
+
 class SF_GPUSettings(bpy.types.PropertyGroup):
     source: bpy.props.PointerProperty(name='Collision Surface',type=bpy.types.Object,update=changed)
     material: bpy.props.PointerProperty(name='Water Material',type=bpy.types.Material,update=material_changed)
+    # Viewport-only preview settings: outside FlowConfig, so they never invalidate physics.
+    point_size: bpy.props.FloatProperty(name='Point Size',default=2.,min=1.,max=16.,subtype='PIXEL',update=points_changed)
+    point_color: bpy.props.FloatVectorProperty(name='Point Color',size=4,subtype='COLOR',min=0.,max=1.,
+                                               default=(.1,.5,1.,1.),update=points_changed)
+    point_style: bpy.props.EnumProperty(name='Preview Style',default='POINTS',update=points_changed,
+        items=[('POINTS','Points','Flat GPU points (fastest)'),('WATER','Water','Screen-space smoothed water surface (viewport only)')])
+    water_color: bpy.props.FloatVectorProperty(name='Water Color',size=4,subtype='COLOR',min=0.,max=1.,
+                                               default=(.45,.62,.8,.85),update=points_changed)
+    water_smoothing: bpy.props.FloatProperty(name='Water Smoothing',default=.003,min=0.,max=.01,subtype='DISTANCE',
+                                             update=points_changed,description='World-space width of the depth filter')
+    water_radius_scale: bpy.props.FloatProperty(name='Water Sprite Scale',default=3.,min=1.,max=6.,update=points_changed,
+                                                description='Sprite radius relative to particle radius, so neighbours overlap')
+    display_limit: bpy.props.IntProperty(name='Display Limit',description='Points drawn; 0 draws all',
+                                         default=0,min=0,max=1000000,update=points_changed)
 
 
 _bounds = {
@@ -33,7 +52,7 @@ _bounds = {
     'merge_distance_scale':(0,1),'maximum_merged_radius_scale':(1,8),
     'reconstruction_scale':(.5,4),'wetness_deposit_rate':(0,1000),'wetness_drying_rate':(0,1000),
     'field_spacing':(.00005,.02),'contact_spacing':(.00005,.05),
-    'field_viscosity':(0,.01),'surface_tension':(0,1),'resample_target':(0,1000000),
+    'field_viscosity':(0,.01),'surface_tension':(0,1),'contact_hysteresis':(0,2),'resample_target':(0,1000000),
 }
 for field in fields(FlowConfig):
     opts={'name':field.name.replace('_',' ').title(),'default':field.default,'update':changed}

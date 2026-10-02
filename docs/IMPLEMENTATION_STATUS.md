@@ -1,6 +1,23 @@
 # Implementation status — connected development and legacy releases
 
-## Connected development checkpoint, 2026-10-01
+## Particle preview and offline bake 0.0.4 (experimental), 2026-10-02
+
+Plan Tasks 1-9 are implemented, including an independent final review whose Important findings were fixed:
+- Field Particle Preview with 1M-particle 1080p gates passing on the RTX 5050
+- explicit cancellable particle cache bake
+- CPU offline meshing with CUDA-free playback
+- optional screen-space Water preview
+- contact hysteresis for rivulets
+- wet sheen
+- velocity-attribute motion blur
+
+FIELD stays **experimental**: drainage against the reference fails at default
+settings, and no final clip with the latest look settings was rendered. Workflow,
+costs and limits are in [Particle preview and bake](PARTICLE_PREVIEW_AND_BAKE.md).
+Suites: 112 Python, 82 CUDA, 75 Blender. The staged package passes validation and
+both smoke runners. Nothing is pushed or published.
+
+## Connected development checkpoint, 2026-10-02 (historical, superseded by 0.0.4 above)
 
 The development branch now has GPU surface interactions, conservative merging,
 initial coating/time controls, attached/free mesh reconstruction and persistent
@@ -8,17 +25,21 @@ wetness. Both 180-frame clips and comparison stills exist, but the visual
 reference gate still fails: coating/channels are too coarse and patchy.
 
 The user now permits offline final meshing and requires interactive particle
-simulation at one million particles. Current solver-only probes are below that
-target: the latest measured FIELD attached probe reached 24.73 FPS with one
-million live particles, before graph reuse and duplicate-transfer removal.
+simulation at one million particles. The Surface Field preview meets the
+1080p viewport target on the RTX 5050: attached, free, mixed and dense runs
+each complete 120 warmup plus 600 measured full-count draws at 34-47 FPS with
+p95 23-31 ms (attached has about 2 ms margin; background GPU apps must be
+closed). The visual drainage comparison against the reference fails: the
+coating drains far too slowly and forms no distinct rivulets.
 The revised [design](superpowers/specs/2026-10-01-million-particle-preview-design.md)
-and plan are approved. Surface preparation and field dynamics are complete;
-particle transport/aggregation is in progress. Point drawing and offline baking
-remain unfinished. Work is paused at the user's request; the
+and plan are approved. Tasks 1-6 (preparation, field dynamics, transport,
+point drawing, preparation reuse, measured gates) are complete; drip release,
+thin-film wall drag and fixed field substeps were added by user ruling. The
+particle cache and offline baking (Tasks 7-9) remain unfinished. The
 [saved checkpoint](superpowers/checkpoints/2026-10-01-particle-scale.md) records
 the resume steps. No version 0.0.4 package or release is delivered.
 
-Verified checkpoint: 68 Python, 73 CUDA and 61 Blender tests. Raw results,
+Verified checkpoint: 90 Python, 80 CUDA and 68 Blender tests. Raw results,
 reproduction and limitations are in
 [Connected validation](CONNECTED_WATER_VALIDATION.md). The earlier 0.0.3
 measurements below are historical Drops evidence, not proof for this increment.

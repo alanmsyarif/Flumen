@@ -54,7 +54,43 @@ class FieldDynamicsTests(unittest.TestCase):
         after=float(np.sum(p.chart.areas*np.sum(b.velocity.numpy()**2,axis=1)))
         self.assertLess(after,before)
 
-    def test_capillary_response_and_step_limit(self):
+    def test_thin_film_wall_drag(self):
+        # Lubrication wall shear: drag = resistance + 3 nu / h^2, so film fronts cannot race.
+        cfg=FlowConfig(capacity=8,resistance=5,gravity=(0,0,-1),surface_damping=0,
+                       field_viscosity=1e-6,surface_tension=0)
+        for height in (.001,.0001):
+            p,b,cfg=self.make([[0,0,0],[.1,0,0],[0,0,.1]],cfg)
+            b.volume.assign(p.chart.areas*height); b.thickness.assign([height]*len(p.chart.vertices))
+            for _ in range(10): self.evolve(p,b,cfg,.1)
+            drag=5+3e-6/height**2
+            np.testing.assert_allclose(b.velocity.numpy()[:,2],-(1-np.exp(-drag))/drag,rtol=1e-3)
+
+    def test_dry_contact_line_pins_thin_film(self):
+        # Contact-angle hysteresis: a dry surface holds a film until gravity beats
+        # (sigma/rho) dcos / (h L); wet tracks and thick films are free.
+        cfg=FlowConfig(capacity=8,resistance=5,gravity=(0,0,-9.81),surface_damping=0,
+                       field_viscosity=0,surface_tension=.072,contact_hysteresis=.3)
+        free=-(1-np.exp(-.5))/5*9.81
+        speeds={}
+        for wet in (0.,1.):
+            for height in (.00005,.01):
+                p,b,cfg=self.make([[0,0,0],[.1,0,0],[0,0,.1]],cfg)
+                b.volume.assign(p.chart.areas*height); b.thickness.assign([height]*len(p.chart.vertices))
+                b.wetness.assign([wet]*len(p.chart.vertices))
+                self.evolve(p,b,cfg,.1)
+                speeds[wet,height]=b.velocity.numpy()[:,2]
+                if wet == 0.:   # a held contact line has not advanced, so it does not wet the surface
+                    self.assertEqual(bool(np.all(b.wetness.numpy()==0)),height==.00005)
+                pin=.072/1000*.3/(height*p.chart.operator_spacing)
+                expected=free*max(0.,1.-(1.-wet)*pin/9.81)
+                # wetting during the interval is not applied before the kick
+                np.testing.assert_allclose(speeds[wet,height],expected,rtol=1e-4,atol=1e-7)
+        self.assertTrue(np.all(speeds[0.,.00005]==0))          # thin film on dry surface: pinned
+        self.assertTrue(np.all(speeds[1.,.00005]<0))           # same film on a wet track: flows
+        self.assertTrue(np.all(speeds[0.,.01]<0))             # thick front breaks through
+        with self.assertRaises(ValueError): FlowConfig(capacity=8,contact_hysteresis=3.).validate()
+
+    def test_capillary_response_and_substep_guard(self):
         p,b,cfg=self.make()
         height=np.full(len(p.chart.vertices),.001,np.float32)
         peak=int(np.argmin(np.sum((p.chart.vertices-[.025,.025,0])**2,axis=1)))
@@ -64,9 +100,16 @@ class FieldDynamicsTests(unittest.TestCase):
         radial=p.chart.vertices-p.chart.vertices[peak]
         self.assertGreater(float(np.sum(radial*b.velocity.numpy())),0.)
         self.assertTrue(np.isfinite(b.velocity.numpy()).all())
-        self.assertLessEqual(step.substeps,64)
+        # Thickness is frozen within an interval, so substeps only resolve the velocity ODE.
+        self.assertEqual(step.substeps,cfg.minimum_substeps)
+        speed=float(np.linalg.norm(b.velocity.numpy(),axis=1).max())
+        large=self.evolve(p,b,cfg,1.)
+        self.assertEqual(large.substeps,cfg.minimum_substeps)
+        np.testing.assert_allclose(large.courant,speed/p.chart.operator_spacing,rtol=1e-5)
+        self.assertTrue(np.isfinite(b.velocity.numpy()).all())
         before=b.velocity.numpy().copy(); wet=b.wetness.numpy().copy()
-        with self.assertRaises(RuntimeError): self.evolve(p,b,cfg,1000.)
+        height[0]=np.nan; b.thickness.assign(height)
+        with self.assertRaisesRegex(RuntimeError,'nonfinite'): self.evolve(p,b,cfg,.001)
         np.testing.assert_array_equal(b.velocity.numpy(),before)
         np.testing.assert_array_equal(b.wetness.numpy(),wet)
 

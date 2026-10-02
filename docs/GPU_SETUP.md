@@ -30,7 +30,7 @@ copies nested GPU modules, and includes dependency/license metadata. The parent
 smoke runner removes its temporary dependencies after Blender exits, so Windows
 has released the DLLs. No extra NumPy wheel is needed in Blender.
 
-Install `artifacts/flumen-0.0.3.zip` with Blender Preferences > Get Extensions >
+Install `artifacts/flumen-0.0.4.zip` with Blender Preferences > Get Extensions >
 Install from Disk. This GPU package is Windows x64 only. Enable Flumen, open
 `artifacts/Flumen_GPU_Demo.blend`, select the GPU Flow host, and play from frame 1.
 The demo requires the extension; its GPU runtime is reconstructed rather than baked.

@@ -1,6 +1,23 @@
 """Immutable settings shared by CUDA and Blender adapters."""
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from math import isfinite, sqrt
+
+# Bump when chart/contact construction changes, so retained preparation is rebuilt.
+PREPARATION_VERSION = 1
+# FIELD meshes cached particles offline; mesh quality never changes particle state.
+# FIELD ignores these: offline-only reconstruction, and the LEGACY pairwise interaction toggle.
+_FIELD_OFFLINE_ONLY = frozenset({'reconstruction_scale', 'interactions_enabled'})
+
+
+def physical_key(config) -> tuple:
+    """Settings whose change requires replaying particle state."""
+    skip = _FIELD_OFFLINE_ONLY if config.solver_backend == 'FIELD' else frozenset()
+    return tuple((f.name, getattr(config, f.name)) for f in fields(config) if f.name not in skip)
+
+
+def preparation_key(geometry_fingerprint: str, config) -> str:
+    """Identity of static chart/contact data: evaluated world geometry plus spacing."""
+    return f'{PREPARATION_VERSION}:{geometry_fingerprint}:{config.field_spacing!r}:{config.contact_spacing!r}'
 
 
 def frame_dt(fps: float, fps_base: float = 1.0) -> float:
@@ -49,6 +66,7 @@ class FlowConfig:
     contact_spacing: float = .002
     field_viscosity: float = 1.e-6
     surface_tension: float = .072
+    contact_hysteresis: float = 0.   # cos(receding)-cos(advancing): dry surface pins thin film fronts
     resample_target: int = 0
 
     def validate(self) -> None:
@@ -88,7 +106,7 @@ class FlowConfig:
             ('maximum_merged_radius_scale',1.,8.), ('reconstruction_scale',.5,4.),
             ('wetness_deposit_rate',0.,1000.), ('wetness_drying_rate',0.,1000.),
             ('field_spacing',.00005,.02), ('contact_spacing',.00005,.05),
-            ('field_viscosity',0.,.01), ('surface_tension',0.,1.),
+            ('field_viscosity',0.,.01), ('surface_tension',0.,1.), ('contact_hysteresis',0.,2.),
         ):
             value = getattr(self, name)
             if not isfinite(value) or not low <= value <= high:

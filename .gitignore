@@ -5,11 +5,13 @@ __pycache__/
 .gpu-deps/
 .gpu-wheels/
 artifacts/extension-stage-gpu*/
+artifacts/extension-stage-particles*/
 artifacts/flumen-0.0.3*.zip
 artifacts/*.log
-artifacts/flumen-0.0.4*.zip
 artifacts/Flumen_Connected_Water_Demo.blend*
 artifacts/connected-*.mp4
 artifacts/connected-*_frames/
 artifacts/probe-screen.png
 artifacts/connected-geometry-probe.json
+artifacts/offline-clip-*.mp4
+.clip-work/
