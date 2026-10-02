@@ -190,7 +190,37 @@ drainage is far too slow, no distinct rivulets or hanging drips form, and thin
 film near the 10 um clip threshold renders speckled (noisy deposit with about
 ten particles per 2 mm node).
 
-Suites: 105 Python, 80 CUDA and 73 Blender tests pass.
+### Look fixes (after Task 8)
+
+[Drainage sweeps](../artifacts/drainage-sweep.json) showed resistance barely
+matters for the fixture's thin coat (0.05-0.17 mm, dominated by 3 nu/h^2 wall
+drag), while the reference pours millimetre-thick water. With eight times the
+water (2x particle radius) at resistance 60 the front advances 2.9/5.0/9.7/11.7 cm
+at frames 30/60/120/180 with persistent channels; no solver default changed, so
+the speed gates above remain valid.
+
+Offline meshing gained volume-conserving film smoothing, PCA (Yu & Turk)
+neighbour drop kernels, a film thickness cap whose excess becomes pendant drops
+(the nose spikes were film nodes with tiny lattice area holding up to 96 mm of
+"thickness"), screen-resolution drop grids and an out-of-shot crop. The current
+[clip](../artifacts/offline-clip.json) (250k particles, 8x water, PCA drops, 2 mm
+cap, smoothing 20, 0.4 mm drops, 2 mm film) meshes 180 frames in 21 min on 8
+workers. Frame 30 shows a connected sheet reaching the nose with tongues and
+drips falling from brow and ears ([opaque f030](../artifacts/offline-clip-opaque-f030.png),
+[water f090](../artifacts/offline-clip-water-f090.png)); late frames still break the
+thin residual film into patches ([opaque f180](../artifacts/offline-clip-opaque-f180.png)).
+
+### Screen-space water preview
+
+An optional Water preview style (`flumen/gpu_water_screen.py`) draws particles as
+sphere sprites, smooths depth with a narrow-range filter, shades films with the
+collision surface's geometry and drops with filtered depth. Its
+[1080p gate](../artifacts/particle-viewport-attached-water.json) passes: attached,
+1M simulated and drawn, 33.3 FPS mean, p95 32.0 ms (Points: 34.3 / 31.2).
+Offscreen framebuffers are rebuilt each draw: cached ones silently lost depth
+testing in Blender 5.2.
+
+Suites: 109 Python, 80 CUDA and 74 Blender tests pass.
 
 ## Fixture and reproduction
 
