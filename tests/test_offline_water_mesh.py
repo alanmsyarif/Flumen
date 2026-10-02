@@ -154,3 +154,16 @@ def test_mesh_cancel_and_budget(tmp_path):
     manifest = json.loads((tmp_path/'ok'/'manifest.json').read_text(encoding='utf8'))
     assert manifest['status'] == 'complete' and sorted(manifest['frames']) == ['1', '2', '3']
     assert done['frames'] == 3
+
+
+def test_parallel_sequence_matches_serial_bit_for_bit(tmp_path):
+    particles = film_particles(count=600)+[((.004, .004, .002), 1, 0, (.3, .3), DROP), ((.004+2*R, .004, .002), 1, 0, (.3, .3), DROP)]
+    reader = write_cache(tmp_path/'cache', *SQUARE, [0, 0], particles, frames=3)
+    options = MeshOptions(spacing=R/4, film_spacing=.001)
+    mesh_cache_sequence(reader, options, tmp_path/'serial', lambda: False)
+    mesh_cache_sequence(reader, options, tmp_path/'parallel', lambda: False, workers=2)
+    serial = json.loads((tmp_path/'serial'/'manifest.json').read_text(encoding='utf8'))
+    parallel = json.loads((tmp_path/'parallel'/'manifest.json').read_text(encoding='utf8'))
+    assert parallel['status'] == 'complete'
+    assert {f: r['sha256'] for f, r in serial['frames'].items()} == {f: r['sha256'] for f, r in parallel['frames'].items()}
+    assert all(r['free_triangles'] > 0 for r in serial['frames'].values())

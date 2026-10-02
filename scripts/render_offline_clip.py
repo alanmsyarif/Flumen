@@ -7,6 +7,7 @@ from mathutils import Euler, Vector
 from pathlib import Path
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -74,6 +75,8 @@ def main():
     parser.add_argument('--frames',type=int,default=180)
     parser.add_argument('--drop-spacing',type=float,default=.0001)
     parser.add_argument('--film-spacing',type=float,default=.002)
+    parser.add_argument('--workers',type=int,default=max(1,min(12,(os.cpu_count() or 2)//2)))
+    parser.add_argument('--reuse-cache',action='store_true',help='Mesh an existing complete cache instead of rebaking')
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     flumen.register()
     scene,host=create_field_demo(count=args.count)
@@ -87,12 +90,18 @@ def main():
     source=host.flumen_gpu.source
     report=dict(measurement_kind='offline_clip',particles=args.count,frames=args.frames,particle_radius=radius,
                 drop_spacing=args.drop_spacing,film_spacing=args.film_spacing)
-    t=time.perf_counter(); job=BakeJob(host,scene,args.work/'cache')
-    while not job.step(): pass
-    report.update(bake_seconds=time.perf_counter()-t,cache_bytes=folder_bytes(args.work/'cache'))
+    if args.reuse_cache:
+        cached=CacheReader(args.work/'cache')
+        if cached.header.frame_count!=args.frames: raise ValueError('Existing cache has a different frame range')
+        report.update(bake_seconds=None,cache_reused=True,cache_bytes=folder_bytes(args.work/'cache'))
+    else:
+        t=time.perf_counter(); job=BakeJob(host,scene,args.work/'cache')
+        while not job.step(): pass
+        report.update(bake_seconds=time.perf_counter()-t,cache_bytes=folder_bytes(args.work/'cache'))
     bpy.data.objects.remove(host,do_unlink=True); runtime.release_all()
     reader=CacheReader(args.work/'cache'); t=time.perf_counter(); frames=[]
-    for result in iter_mesh_cache(reader,MeshOptions(spacing=args.drop_spacing,film_spacing=args.film_spacing),args.work/'mesh'):
+    report['workers']=args.workers
+    for result in iter_mesh_cache(reader,MeshOptions(spacing=args.drop_spacing,film_spacing=args.film_spacing),args.work/'mesh',args.workers):
         frames.append(result)
         if result['frame'] in STILLS: print('MESHED',json.dumps({k:result[k] for k in ('frame','seconds','attached_triangles','free_triangles')}),flush=True)
     report.update(mesh_seconds=time.perf_counter()-t,mesh_bytes=folder_bytes(args.work/'mesh'),mesh_frames=frames)

@@ -80,7 +80,9 @@ def _lattice(n):
     return li, lj, local, np.array(up+down, np.int64)
 
 
-def _film(static, cached, options):
+def film_lattice(static, options):
+    """Refined source lattice: depends only on static source data and film spacing, so a
+    sequence builds it once and reuses it for every frame."""
     V = static['source_vertices'].astype(np.float64); T = static['source_triangles'].astype(np.int64); F = len(T)
     spacing = options.film_spacing or options.spacing
     lengths = np.linalg.norm(V[T]-V[np.roll(T, -1, axis=1)], axis=2)
@@ -114,6 +116,14 @@ def _film(static, cached, options):
     np.add.at(normals, tris.ravel(), np.repeat(np.repeat(cross, len(small), axis=0), 3, axis=0))
     np.add.at(node_area, tris.ravel(), np.repeat(small_area/3., 3))
     normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-30)
+    return dict(n=n, F=F, local=local, node=node, count=count, positions=positions, normals=normals,
+                node_area=node_area, tris=tris, max_spacing=float(lengths.max())/n, film_spacing=spacing)
+
+
+def _film(static, cached, options, lattice=None):
+    lattice = lattice or film_lattice(static, options)
+    if lattice['film_spacing'] != (options.film_spacing or options.spacing): raise ValueError('Lattice spacing mismatch')
+    n, F, local, node, count = lattice['n'], lattice['F'], lattice['local'], lattice['node'], lattice['count']
     # Conservative deposit of attached particles onto lattice nodes.
     arrays = cached.arrays
     attached = (arrays['state'] == 0) & (arrays['face'] >= 0) & (arrays['face'] < F)
@@ -129,14 +139,16 @@ def _film(static, cached, options):
         w = np.maximum(w, 0.); w /= w.sum(1, keepdims=True)
         corners = np.where(down[:, None], np.stack([local[i0+1, j0+1], local[i0, j0+1], local[i0+1, j0]], 1),
                            np.stack([local[i0, j0], local[i0+1, j0], local[i0, j0+1]], 1))
-        np.add.at(volume, node[f[:, None], corners].ravel(), (w*arrays['volume'][attached][:, None]).ravel())
-    thickness = volume/np.maximum(node_area, 1e-30)
+        # bincount adds in input order, exactly like np.add.at, but without its per-element overhead.
+        volume += np.bincount(node[f[:, None], corners].ravel(), (w*arrays['volume'][attached][:, None]).ravel(), count)
+    thickness = volume/np.maximum(lattice['node_area'], 1e-30)
     represented = float(volume.sum())
-    mesh = _film_shell(positions, normals, thickness, tris, options.min_thickness, options.max_triangles)
+    mesh = _film_shell(lattice['positions'], lattice['normals'], thickness, lattice['tris'],
+                       options.min_thickness, options.max_triangles)
     mesh_volume = _signed_volume(mesh.vertices, mesh.triangles)
     mesh.diagnostics.update(represented_volume=represented, mesh_volume=mesh_volume,
         excluded_volume=max(0., represented-mesh_volume), film_segments=n, film_nodes=count,
-        film_max_spacing=float(lengths.max())/n,
+        film_max_spacing=lattice['max_spacing'],
         unanchored_volume=float(arrays['volume'][(arrays['state'] == 0) & ~attached].astype(np.float64).sum()))
     return mesh
 
@@ -271,20 +283,30 @@ def _free_particles(cached, settings):
 
 
 def _tile_field(tile, particles, members, origin, pitch, T):
+    """Sum particle kernels on the tile's sample points (owned cells plus halo).
+
+    Each particle is evaluated only on its own support box clipped to the tile. Particles are
+    bucketed by clipped box size for vectorization, then contributions are sorted back to
+    (particle order, lexicographic point order) so one bincount adds them in a fixed order:
+    the same order as evaluating particles one by one."""
     p, volume, _, support, axial, axis = particles
     low = tile*T-1; size = T+3
-    field = np.zeros(size**3)
-    if len(members):
-        extent = support[members]*axial[members]
-        width = int(np.ceil(2*extent.max()/pitch))+2
-        offsets = np.stack(np.meshgrid(*[np.arange(width)]*3, indexing='ij'), -1).reshape(-1, 3)
+    if not len(members): return np.zeros((size, size, size))
+    extent = support[members]*axial[members]
+    start = np.floor((p[members]-extent[:, None]-origin)/pitch).astype(np.int64)
+    width = (np.ceil(2*extent/pitch)+2).astype(np.int64)
+    lo = np.maximum(start, low); hi = np.minimum(start+width[:, None], low+size)
+    span = (hi-lo).min(1) > 0
+    side = (hi-lo).max(1)
+    keys, indices, contributions = [], [], []
+    for box in np.unique(side[span]):
+        group = np.flatnonzero(span & (side == box))
+        offsets = np.stack(np.meshgrid(*[np.arange(box)]*3, indexing='ij'), -1).reshape(-1, 3)
         chunk = max(1, 2_000_000//len(offsets))
-        for begin in range(0, len(members), chunk):
-            rows = members[begin:begin+chunk]
-            start = np.floor((p[rows]-(support[rows]*axial[rows])[:, None]-origin)/pitch).astype(np.int64)
-            g = start[:, None, :]+offsets[None]
-            local = g-low
-            valid = ((local >= 0) & (local < size)).all(-1)
+        for begin in range(0, len(group), chunk):
+            rank = group[begin:begin+chunk]; rows = members[rank]
+            g = lo[rank][:, None, :]+offsets[None]
+            valid = (g < hi[rank][:, None, :]).all(-1)
             delta = origin+g*pitch-p[rows][:, None, :]
             along = (delta*axis[rows][:, None, :]).sum(-1)
             perp = delta-along[..., None]*axis[rows][:, None, :]
@@ -293,16 +315,23 @@ def _tile_field(tile, particles, members, origin, pitch, T):
             valid &= q2 < 1.
             weight = (volume[rows]*315./(64.*np.pi*support[rows]**3))[:, None]
             value = weight*(1.-q2)**3
+            local = g-low
             flat = (local[..., 0]*size+local[..., 1])*size+local[..., 2]
-            np.add.at(field, flat[valid], value[valid])
-    return field.reshape(size, size, size)
+            keys.append((rank[:, None]*size**3+flat)[valid]); indices.append(flat[valid]); contributions.append(value[valid])
+    if not keys: return np.zeros((size, size, size))
+    order = np.argsort(np.concatenate(keys), kind='stable')
+    return np.bincount(np.concatenate(indices)[order], np.concatenate(contributions)[order], size**3).reshape(size, size, size)
 
 
 def _contour(field, tile, origin, pitch, T, dims):
     """Marching tetrahedra over the tile's owned cells; returns edge keys, positions, normals, triangles."""
     low = tile*T-1
     grad = np.stack(np.gradient(field, pitch), -1)  # central differences on owned points thanks to the halo
-    cells = np.stack(np.meshgrid(*[np.arange(1, T+1)]*3, indexing='ij'), -1).reshape(-1, 3)
+    hot = np.argwhere(field[1:T+2, 1:T+2, 1:T+2] >= ISO)+1
+    if not len(hot): return None
+    # Only cells with a corner at or above ISO can cross; keep their lexicographic order.
+    low_cell, high_cell = np.maximum(hot.min(0)-1, 1), np.minimum(hot.max(0), T)
+    cells = np.stack(np.meshgrid(*[np.arange(low_cell[a], high_cell[a]+1) for a in range(3)], indexing='ij'), -1).reshape(-1, 3)
     values = np.stack([field[tuple((cells+CORNERS[q]).T)] for q in range(8)], 1)
     crossing = (values.min(1) < ISO) & (values.max(1) >= ISO)
     cells, values = cells[crossing], values[crossing]
@@ -392,8 +421,8 @@ def _signed_volume(vertices, triangles):
     return float(np.einsum('ij,ij->i', q[:, 0], np.cross(q[:, 1], q[:, 2])).sum()/6.)
 
 
-def _iter(static, cached, options, settings, stats):
-    film = _film(static, cached, options)
+def _iter(static, cached, options, settings, stats, lattice=None):
+    film = _film(static, cached, options, lattice)
     yield WaterGeometry(film, MeshBatch.empty(), {'kind': 'attached'})
     for batch in _free_tiles(static, cached, options, settings, stats):
         yield WaterGeometry(MeshBatch.empty(), batch, {'kind': 'free', 'tile': batch.diagnostics['tile']})
@@ -404,13 +433,14 @@ def iter_mesh_tiles(reader, frame: int, options: MeshOptions):
     yield from _iter(reader.read_static(), reader.read(frame), options, reader.header.physical_settings, {})
 
 
-def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Path, cancel, *, static=None) -> dict:
+def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Path, cancel, *, static=None,
+                      lattice=None) -> dict:
     """Mesh one cached frame to destination/frame_NNNNNNN.npz; returns diagnostics."""
     started = perf_counter()
     static = reader.read_static() if static is None else static
     cached = reader.read(frame); stats = {}
     film = None; keys, positions, normals, triangles = [], [], [], []; total = 0
-    for chunk in _iter(static, cached, options, reader.header.physical_settings, stats):
+    for chunk in _iter(static, cached, options, reader.header.physical_settings, stats, lattice):
         if cancel(): raise RuntimeError('Meshing was cancelled')
         if chunk.diagnostics['kind'] == 'attached':
             film = chunk.attached; total += len(film.triangles); continue
@@ -445,11 +475,38 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
         free_triangles=len(free_triangles), seconds=perf_counter()-started)
 
 
-def iter_mesh_cache(reader, options: MeshOptions, destination: Path):
-    """Mesh one cached frame per step. Closing the generator early marks the sequence cancelled;
-    the manifest is complete only after the last frame."""
+_WORKER = {}
+
+
+def _worker_start(cache_path, options):
+    from .particle_cache import CacheReader
+    reader = CacheReader(cache_path); static = reader.read_static()
+    _WORKER.update(reader=reader, static=static, options=options, lattice=film_lattice(static, options))
+
+
+def _worker_frame(frame, destination):
+    w = _WORKER
+    return mesh_cached_frame(w['reader'], frame, w['options'], destination, lambda: False,
+                             static=w['static'], lattice=w['lattice'])
+
+
+def _worker_context():
+    import multiprocessing, sys
+    context = multiprocessing.get_context('spawn')
+    # Inside Blender sys.executable is blender.exe; workers need the bundled Python instead.
+    python = Path(sys.prefix)/'bin'/('python.exe' if os.name == 'nt' else 'python3')
+    if Path(sys.executable).stem.lower().startswith('blender') and python.exists():
+        context.set_executable(str(python))
+    return context
+
+
+def iter_mesh_cache(reader, options: MeshOptions, destination: Path, workers: int = 1):
+    """Mesh cached frames in order, one result per step; `workers` > 1 meshes frames in parallel
+    processes. Closing the generator early marks the sequence cancelled; the manifest is complete
+    only after the last frame."""
     destination = Path(destination)
     if destination.exists(): raise FileExistsError(f'Mesh destination already exists: {destination}')
+    if not isinstance(workers, int) or workers < 1: raise ValueError('Workers must be a positive integer')
     destination.mkdir(parents=True)
     manifest = dict(schema_version=1, status='writing', options=asdict(options),
                     source_fingerprint=reader.header.source_fingerprint, cache=str(reader.path), frames={})
@@ -458,20 +515,31 @@ def iter_mesh_cache(reader, options: MeshOptions, destination: Path):
         temporary = destination/'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=1), encoding='utf8'); os.replace(temporary, destination/'manifest.json')
     save()
+    frames = range(reader.header.start_frame, reader.header.end_frame+1)
+    pool = None
     try:
-        static = reader.read_static()
-        for frame in range(reader.header.start_frame, reader.header.end_frame+1):
-            result = mesh_cached_frame(reader, frame, options, destination, lambda: False, static=static)
-            manifest['frames'][str(frame)] = result; save()
+        if workers == 1:
+            static = reader.read_static(); lattice = film_lattice(static, options)
+            results = (mesh_cached_frame(reader, f, options, destination, lambda: False, static=static, lattice=lattice)
+                       for f in frames)
+        else:
+            from concurrent.futures import ProcessPoolExecutor
+            pool = ProcessPoolExecutor(workers, mp_context=_worker_context(), initializer=_worker_start,
+                                       initargs=(str(reader.path), options))
+            results = pool.map(_worker_frame, frames, [destination]*len(frames))
+        for result in results:
+            manifest['frames'][str(result['frame'])] = result; save()
             yield result
     except BaseException:
         manifest['status'] = 'cancelled'; save(); raise
+    finally:
+        if pool is not None: pool.shutdown(wait=True, cancel_futures=True)
     manifest['status'] = 'complete'; save()
 
 
-def mesh_cache_sequence(reader, options: MeshOptions, destination: Path, cancel) -> dict:
+def mesh_cache_sequence(reader, options: MeshOptions, destination: Path, cancel, workers: int = 1) -> dict:
     """Mesh every cached frame, checking `cancel` before each one."""
-    steps = iter_mesh_cache(reader, options, destination); results = []
+    steps = iter_mesh_cache(reader, options, destination, workers); results = []
     try:
         while True:
             if cancel(): raise RuntimeError('Meshing was cancelled')
