@@ -54,6 +54,17 @@ class FieldDynamicsTests(unittest.TestCase):
         after=float(np.sum(p.chart.areas*np.sum(b.velocity.numpy()**2,axis=1)))
         self.assertLess(after,before)
 
+    def test_thin_film_wall_drag(self):
+        # Lubrication wall shear: drag = resistance + 3 nu / h^2, so film fronts cannot race.
+        cfg=FlowConfig(capacity=8,resistance=5,gravity=(0,0,-1),surface_damping=0,
+                       field_viscosity=1e-6,surface_tension=0)
+        for height in (.001,.0001):
+            p,b,cfg=self.make([[0,0,0],[.1,0,0],[0,0,.1]],cfg)
+            b.volume.assign(p.chart.areas*height); b.thickness.assign([height]*len(p.chart.vertices))
+            for _ in range(10): self.evolve(p,b,cfg,.1)
+            drag=5+3e-6/height**2
+            np.testing.assert_allclose(b.velocity.numpy()[:,2],-(1-np.exp(-drag))/drag,rtol=1e-3)
+
     def test_capillary_response_and_step_limit(self):
         p,b,cfg=self.make()
         height=np.full(len(p.chart.vertices),.001,np.float32)

@@ -198,7 +198,7 @@ def scatter_gradient(gradients: wp.array(dtype=wp.vec3), triangles: wp.array(dty
 def field_kick(velocity: wp.array(dtype=wp.vec3), height: wp.array(dtype=float),
                normals: wp.array(dtype=wp.vec3), pressure: wp.array(dtype=wp.vec3),
                capillary: wp.array(dtype=wp.vec3), gravity: wp.vec3, sigma: float,
-               pressure_cap: float, capillary_cap: float, drag: float, dt: float,
+               pressure_cap: float, capillary_cap: float, drag: float, viscosity: float, dt: float,
                limited: wp.array(dtype=int)):
     i = wp.tid(); normal = normals[i]
     if height[i] <= 0.:
@@ -214,9 +214,11 @@ def field_kick(velocity: wp.array(dtype=wp.vec3), height: wp.array(dtype=float),
     acceleration += p+c
     acceleration -= normal*wp.dot(acceleration,normal)
     value = velocity[i]-normal*wp.dot(velocity[i],normal)
-    decay = wp.exp(-drag*dt)
+    # Lubrication wall shear 3 nu / h^2: thin film fronts cannot outrun the film.
+    damping = drag+3.*viscosity/wp.max(height[i]*height[i],1.e-24)
+    decay = wp.exp(-damping*dt)
     coefficient = dt
-    if drag*dt > 1.e-5: coefficient = (1.-decay)/drag
+    if damping*dt > 1.e-5: coefficient = (1.-decay)/damping
     velocity[i] = value*decay+acceleration*coefficient
 
 
@@ -292,7 +294,7 @@ def _evolve_kernels(chart, buffers, config, needed, dt):
         wp.launch(field_kick,len(chart.vertices),inputs=[buffers.velocity,buffers.thickness,chart.normals_gpu,
             buffers.pressure_gradient,buffers.capillary_gradient,wp.vec3(*config.gravity),config.surface_tension,
             config.repulsion_acceleration,config.cohesion_acceleration,config.resistance+config.surface_damping,
-            interval,buffers.force_limited],device=buffers.device)
+            config.field_viscosity,interval,buffers.force_limited],device=buffers.device)
         if config.field_viscosity > 0:
             wp.copy(buffers.rhs,buffers.velocity)
             for iteration in range(8):
