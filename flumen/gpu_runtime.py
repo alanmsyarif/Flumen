@@ -332,7 +332,8 @@ def unregister_handlers():
 
 def _handlers():
     h=bpy.app.handlers
-    return [(h.frame_change_post,on_frame),(h.depsgraph_update_post,on_depsgraph),
+    from .gpu_baked_display import on_baked_frame
+    return [(h.frame_change_post,on_frame),(h.frame_change_post,on_baked_frame),(h.depsgraph_update_post,on_depsgraph),
             (h.load_pre,on_load),(h.undo_pre,on_load),(h.redo_pre,on_load),
             (h.render_init,on_render),(h.render_complete,on_render_end),(h.render_cancel,on_render_end)]
 

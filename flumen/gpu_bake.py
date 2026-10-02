@@ -156,3 +156,66 @@ class SF_OT_bake_particle_cache(bpy.types.Operator):
         wm=context.window_manager
         if self._timer is not None: wm.event_timer_remove(self._timer)
         wm.progress_end(); self._timer=None
+
+
+class SF_OT_mesh_particle_cache(bpy.types.Operator):
+    bl_idname='flumen.mesh_particle_cache'
+    bl_label='Mesh Particle Cache'
+    bl_description='Mesh every frame of the baked particle cache offline (CPU) and add CUDA-free playback objects'
+
+    spacing: bpy.props.FloatProperty(name='Mesh Spacing',default=.0001,min=.00001,max=.01,subtype='DISTANCE',
+                                     description='Drop grid pitch and film lattice edge')
+    directory: bpy.props.StringProperty(name='Parent Folder',subtype='DIR_PATH')
+    mesh_name: bpy.props.StringProperty(name='Mesh Name',default='flumen_water_mesh')
+
+    _steps=None
+    _timer=None
+
+    @classmethod
+    def poll(cls,context):
+        host=context.active_object
+        return host is not None and bool(host.get('sf_particle_cache'))
+
+    def invoke(self,context,event):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self,context):
+        from .offline_mesher import MeshOptions, iter_mesh_cache
+        from .particle_cache import CacheReader
+        if not self.directory or not self.mesh_name or Path(self.mesh_name).name!=self.mesh_name:
+            self.report({'ERROR'},'Choose a parent folder and a plain mesh name'); return {'CANCELLED'}
+        host=context.active_object
+        self._path=Path(bpy.path.abspath(self.directory))/self.mesh_name
+        try:
+            self._reader=CacheReader(host['sf_particle_cache'])
+            self._steps=iter_mesh_cache(self._reader,MeshOptions(spacing=self.spacing),self._path)
+        except (ValueError,OSError) as exc:
+            self.report({'ERROR'},str(exc)); return {'CANCELLED'}
+        self._host=host; self._done=0
+        wm=context.window_manager
+        self._timer=wm.event_timer_add(.001,window=context.window)
+        wm.progress_begin(0,self._reader.header.frame_count); wm.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self,context,event):
+        if event.type=='ESC':
+            self._steps.close(); self._end(context)
+            self.report({'WARNING'},'Meshing cancelled; the mesh sequence is marked incomplete'); return {'CANCELLED'}
+        if event.type!='TIMER': return {'PASS_THROUGH'}
+        try:
+            next(self._steps); self._done+=1
+            context.window_manager.progress_update(self._done); return {'RUNNING_MODAL'}
+        except StopIteration:
+            pass
+        except (ValueError,RuntimeError,OSError) as exc:
+            self._end(context); self.report({'ERROR'},f'Meshing failed: {exc}'); return {'CANCELLED'}
+        self._end(context)
+        from .gpu_baked_display import create_baked_water
+        create_baked_water(self._host['sf_particle_cache'],self._path,context.scene,source=self._host.flumen_gpu.source)
+        self.report({'INFO'},f'Meshed {self._done} frames to {self._path}')
+        return {'FINISHED'}
+
+    def _end(self,context):
+        wm=context.window_manager
+        if self._timer is not None: wm.event_timer_remove(self._timer)
+        wm.progress_end(); self._timer=None

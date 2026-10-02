@@ -434,8 +434,9 @@ def mesh_cached_frame(reader, frame: int, options: MeshOptions, destination: Pat
         if tracing: tracemalloc.stop()
 
 
-def mesh_cache_sequence(reader, options: MeshOptions, destination: Path, cancel) -> dict:
-    """Mesh every cached frame; the manifest is marked complete only after the last frame."""
+def iter_mesh_cache(reader, options: MeshOptions, destination: Path):
+    """Mesh one cached frame per step. Closing the generator early marks the sequence cancelled;
+    the manifest is complete only after the last frame."""
     destination = Path(destination)
     if destination.exists(): raise FileExistsError(f'Mesh destination already exists: {destination}')
     destination.mkdir(parents=True)
@@ -446,13 +447,25 @@ def mesh_cache_sequence(reader, options: MeshOptions, destination: Path, cancel)
         temporary = destination/'manifest.json.tmp'
         temporary.write_text(json.dumps(manifest, indent=1), encoding='utf8'); os.replace(temporary, destination/'manifest.json')
     save()
-    static = reader.read_static()
     try:
+        static = reader.read_static()
         for frame in range(reader.header.start_frame, reader.header.end_frame+1):
-            if cancel(): raise RuntimeError('Meshing was cancelled')
-            manifest['frames'][str(frame)] = mesh_cached_frame(reader, frame, options, destination, cancel, static=static)
-            save()
+            result = mesh_cached_frame(reader, frame, options, destination, lambda: False, static=static)
+            manifest['frames'][str(frame)] = result; save()
+            yield result
     except BaseException:
         manifest['status'] = 'cancelled'; save(); raise
     manifest['status'] = 'complete'; save()
-    return dict(frames=len(manifest['frames']), seconds=sum(r['seconds'] for r in manifest['frames'].values()))
+
+
+def mesh_cache_sequence(reader, options: MeshOptions, destination: Path, cancel) -> dict:
+    """Mesh every cached frame, checking `cancel` before each one."""
+    steps = iter_mesh_cache(reader, options, destination); results = []
+    try:
+        while True:
+            if cancel(): raise RuntimeError('Meshing was cancelled')
+            try: results.append(next(steps))
+            except StopIteration: break
+    finally:
+        steps.close()
+    return dict(frames=len(results), seconds=sum(r['seconds'] for r in results))

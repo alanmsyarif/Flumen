@@ -20,7 +20,9 @@ class SF_PT_gpu(bpy.types.Panel):
         layout.operator('flumen.reset_gpu_flow',icon='FILE_REFRESH')
         if settings.solver_backend=='FIELD':
             layout.operator('flumen.bake_particle_cache',icon='FILE_CACHE')
-            if host.get('sf_particle_cache'): layout.label(text=f"Cache: {host['sf_particle_cache']}",icon='CHECKMARK')
+            if host.get('sf_particle_cache'):
+                layout.label(text=f"Cache: {host['sf_particle_cache']}",icon='CHECKMARK')
+                layout.operator('flumen.mesh_particle_cache',icon='MOD_FLUIDSIM')
         error=host.get('sf_gpu_error','')
         if error:
             box=layout.box(); box.alert=True
