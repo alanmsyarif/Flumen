@@ -4,30 +4,40 @@ from dataclasses import dataclass
 from math import isfinite
 from time import perf_counter
 import warp as wp
-from warp.utils import radix_sort_pairs
+from warp.utils import radix_sort_pairs, array_scan
 from .state import ParticleArrays
 from .surface_chart import chart_anchor
 
 
 @wp.kernel
-def contribution_keys(d: ParticleArrays, triangles: wp.array(dtype=wp.vec3i), level: int,
-                      source_faces: int, keys: wp.array(dtype=int), values: wp.array(dtype=int),
-                      amounts: wp.array(dtype=wp.float64), momentum: wp.array(dtype=wp.vec3d),
-                      unsupported: wp.array(dtype=wp.float64)):
+def attached_mask(d: ParticleArrays, source_faces: int, mask: wp.array(dtype=int),
+                  unsupported: wp.array(dtype=wp.float64)):
     i = wp.tid()
-    valid = d.active[i] == 1 and d.state[i] == 0
-    valid = valid and d.face[i] >= 0 and d.face[i] < source_faces
+    attached = d.active[i] == 1 and d.state[i] == 0
+    valid = attached and d.face[i] >= 0 and d.face[i] < source_faces
     valid = valid and d.bary[i][0]>=-1.e-6 and d.bary[i][1]>=-1.e-6 and d.bary[i][0]+d.bary[i][1]<=1.000001
-    nodes = wp.vec3i(-1)
-    weights = wp.vec3(0.)
-    if valid:
-        child, weights = chart_anchor(d.face[i], d.bary[i], level)
-        nodes = triangles[child]
-    elif d.active[i] == 1 and d.state[i] == 0:
-        wp.atomic_add(unsupported,0,wp.float64(d.volume[i]))
-    # Stable radix sort keeps ascending contribution index within each node.
+    mask[i] = 0
+    if valid: mask[i] = 1
+    elif attached: wp.atomic_add(unsupported,0,wp.float64(d.volume[i]))
+
+
+@wp.kernel
+def masked_count(mask: wp.array(dtype=int), prefix: wp.array(dtype=int), count: wp.array(dtype=int)):
+    last = mask.shape[0]-1; count[0] = prefix[last]+mask[last]
+
+
+@wp.kernel
+def contribution_keys(d: ParticleArrays, triangles: wp.array(dtype=wp.vec3i), level: int,
+                      mask: wp.array(dtype=int), prefix: wp.array(dtype=int),
+                      keys: wp.array(dtype=int), values: wp.array(dtype=int),
+                      amounts: wp.array(dtype=wp.float64), momentum: wp.array(dtype=wp.vec3d)):
+    i = wp.tid()
+    if mask[i] == 0: return
+    child, weights = chart_anchor(d.face[i], d.bary[i], level)
+    nodes = triangles[child]
+    # Compacted in ascending particle order; stable radix sort keeps that order per node.
     for k in range(3):
-        index = 3*i+k
+        index = 3*prefix[i]+k
         node = nodes[k]
         if node < 0: node = 2147483647
         keys[index] = node
@@ -112,6 +122,8 @@ class FieldBuffers:
         self.capacity = 0
         self.graphs = {}
         self.keys=self.values=self.amounts=self.incoming=self.partial_volume=self.partial_momentum=None
+        self.mask=self.prefix=None
+        self.count = wp.zeros(1,dtype=int,device=device)
 
     def reserve(self, capacity):
         if self.capacity == capacity: return
@@ -122,6 +134,8 @@ class FieldBuffers:
         self.incoming = wp.empty(count,dtype=wp.vec3d,device=self.device)
         self.partial_volume = wp.empty(count,dtype=wp.float64,device=self.device)
         self.partial_momentum = wp.empty(count,dtype=wp.vec3d,device=self.device)
+        self.mask = wp.empty(capacity,dtype=int,device=self.device)
+        self.prefix = wp.empty(capacity,dtype=int,device=self.device)
         self.capacity = capacity
 
     def close(self):
@@ -134,14 +148,20 @@ class FieldBuffers:
 def deposit_attached(pool, prepared, buffers: FieldBuffers) -> None:
     buffers.reserve(pool.capacity)
     buffers.starts.fill_(-1); buffers.ends.zero_(); buffers.unsupported.zero_()
-    count = pool.capacity*3
-    wp.launch(contribution_keys,pool.capacity,inputs=[pool.data,prepared.chart.triangles_gpu,
-        prepared.chart.level,len(prepared.source.triangles_cpu),buffers.keys,buffers.values,
-        buffers.amounts,buffers.incoming,buffers.unsupported],device=pool.device)
-    radix_sort_pairs(buffers.keys,buffers.values,count)
-    wp.launch(node_ranges,count,inputs=[buffers.keys,count,buffers.starts,buffers.ends],device=pool.device)
-    wp.launch(segment_partials,count,inputs=[buffers.keys,buffers.values,buffers.amounts,buffers.incoming,
-        buffers.partial_volume,buffers.partial_momentum,count],device=pool.device)
+    # Only attached particles contribute; free or idle slots cost no sorting.
+    wp.launch(attached_mask,pool.capacity,inputs=[pool.data,len(prepared.source.triangles_cpu),
+        buffers.mask,buffers.unsupported],device=pool.device)
+    array_scan(buffers.mask,buffers.prefix,inclusive=False)
+    wp.launch(masked_count,1,inputs=[buffers.mask,buffers.prefix,buffers.count],device=pool.device)
+    count = 3*int(buffers.count.numpy()[0])
+    if count:
+        wp.launch(contribution_keys,pool.capacity,inputs=[pool.data,prepared.chart.triangles_gpu,
+            prepared.chart.level,buffers.mask,buffers.prefix,buffers.keys,buffers.values,
+            buffers.amounts,buffers.incoming],device=pool.device)
+        radix_sort_pairs(buffers.keys,buffers.values,count)
+        wp.launch(node_ranges,count,inputs=[buffers.keys,count,buffers.starts,buffers.ends],device=pool.device)
+        wp.launch(segment_partials,count,inputs=[buffers.keys,buffers.values,buffers.amounts,buffers.incoming,
+            buffers.partial_volume,buffers.partial_momentum,count],device=pool.device)
     wp.launch(reduce_nodes,len(prepared.chart.vertices),inputs=[buffers.starts,buffers.ends,
         buffers.partial_volume,buffers.partial_momentum,buffers.volume,buffers.momentum,
         prepared.chart.areas_gpu,buffers.thickness,buffers.velocity],device=pool.device)

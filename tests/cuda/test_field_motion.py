@@ -182,3 +182,16 @@ class FieldMotionTests(unittest.TestCase):
         self.assertTrue((positions[:,2]<0).all())
         self.assertTrue((outcomes['thin_down'][0]==0).all())
         self.assertTrue((outcomes['thick_up'][0]==0).all())
+
+    def test_deposit_counts_only_attached_particles(self):
+        from flumen.gpu.field_solver import deposit_attached
+        solver=self.make(); solver.seek(1)
+        positions=[[.02,0,.02],[.03,0,.03],[.04,0,.02],[.2,.2,.2]]
+        self.set_particles(solver,positions,[[.6,.2],[.3,.3],[.2,.6],[.3,.3]],states=[0,1,0,1],
+                           volumes=[2e-12,5e-12,3e-12,7e-12])
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+        self.assertAlmostEqual(float(solver.field.volume.numpy().sum()),5e-12,delta=5e-18)  # float32 volumes
+        solver.pool.data.active.assign([0]*solver.pool.capacity)
+        deposit_attached(solver.pool,solver.prepared,solver.field)
+        self.assertEqual(float(solver.field.volume.numpy().sum()),0.)
+        self.assertEqual(float(solver.field.thickness.numpy().max()),0.)
