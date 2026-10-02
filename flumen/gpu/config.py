@@ -1,6 +1,22 @@
 """Immutable settings shared by CUDA and Blender adapters."""
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from math import isfinite, sqrt
+
+# Bump when chart/contact construction changes, so retained preparation is rebuilt.
+PREPARATION_VERSION = 1
+# FIELD meshes cached particles offline; mesh quality never changes particle state.
+_FIELD_OFFLINE_ONLY = frozenset({'reconstruction_scale'})
+
+
+def physical_key(config) -> tuple:
+    """Settings whose change requires replaying particle state."""
+    skip = _FIELD_OFFLINE_ONLY if config.solver_backend == 'FIELD' else frozenset()
+    return tuple((f.name, getattr(config, f.name)) for f in fields(config) if f.name not in skip)
+
+
+def preparation_key(geometry_fingerprint: str, config) -> str:
+    """Identity of static chart/contact data: evaluated world geometry plus spacing."""
+    return f'{PREPARATION_VERSION}:{geometry_fingerprint}:{config.field_spacing!r}:{config.contact_spacing!r}'
 
 
 def frame_dt(fps: float, fps_base: float = 1.0) -> float:

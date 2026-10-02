@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from hashlib import sha256
 from uuid import uuid4
 from .gpu_properties import config_for
+from .gpu.config import physical_key, preparation_key
 from .gpu_display import create_display, update_display, set_material
 from .gpu_point_display import (create_point_display, update_point_display, release_point_display,
                                 purge_point_displays, release_all_point_displays)
 
 RUNTIMES = {}
+_RETAINED = {}  # host pointer -> preparation kept across one Reset for compatible reuse
 _BUSY = False
 _RENDERING = False
 
@@ -21,6 +23,13 @@ class HostRuntime:
     solver: object
     signature: tuple
     geometry_hash: str
+    prepared: object = None  # the runtime's own reference, separate from the solver's
+
+
+def _close(record):
+    record.solver.close()
+    if record.prepared is not None: record.prepared.release()
+    record.prepared = None
 
 
 def _fingerprint(arrays):
@@ -38,20 +47,27 @@ def _signature(host,scene):
         raise ValueError('Keep the GPU Flow host unparented at identity transforms')
     if abs(scene.unit_settings.scale_length-1)>1e-8:
         raise ValueError('Set Scene Unit Scale to 1.0')
-    return (cfg,source.as_pointer(),tuple(v for row in source.matrix_world for v in row),
-            scene.frame_start,scene.render.fps,scene.render.fps_base,scene.as_pointer())
+    # Physical identity only: display/offline-quality edits never invalidate particles.
+    return cfg,(physical_key(cfg),source.as_pointer(),tuple(v for row in source.matrix_world for v in row),
+                scene.frame_start,scene.render.fps,scene.render.fps_base,scene.as_pointer())
 
 
 def mark_dirty(host):
-    if not _BUSY and host and host.get('sf_gpu_host') and host.as_pointer() in RUNTIMES:
-        host['sf_gpu_error']='Settings changed. Reset GPU Flow.'
+    if _BUSY or not host or not host.get('sf_gpu_host'): return
+    record=RUNTIMES.get(host.as_pointer())
+    if record is None: return
+    try: unchanged=_signature(host,bpy.context.scene)[1]==record.signature
+    except (ValueError,TypeError): unchanged=False
+    if not unchanged: host['sf_gpu_error']='Settings changed. Reset GPU Flow.'
 
 
 def purge_deleted():
     alive={obj.as_pointer() for obj in bpy.data.objects}
     for key in list(RUNTIMES):
         if key not in alive:
-            RUNTIMES.pop(key).solver.close()
+            _close(RUNTIMES.pop(key))
+    for key in list(_RETAINED):
+        if key not in alive: _RETAINED.pop(key).release()
     purge_point_displays(alive)
     from .gpu_water_display import purge_orphan_water_displays
     purge_orphan_water_displays()
@@ -61,7 +77,7 @@ def get_runtime(host,scene):
     if host is None or not host.get('sf_gpu_host'):
         raise ValueError('Select a GPU Flow host')
     purge_deleted()
-    signature=_signature(host,scene)
+    config,signature=_signature(host,scene)
     key=host.as_pointer()
     record=RUNTIMES.get(key)
     if record:
@@ -73,16 +89,28 @@ def get_runtime(host,scene):
     from .gpu.solver import FlowSolver
     device=require_cuda()
     arrays=extract_source(host.flumen_gpu.source,bpy.context.evaluated_depsgraph_get())
-    source=build_source(*arrays,signature[0],device)
-    solver=None
+    fingerprint=_fingerprint(arrays)
+    retained=_RETAINED.pop(key,None)
+    prepared=source=solver=None
     try:
-        solver=FlowSolver(signature[0],source,device,start_frame=scene.frame_start,
-                          fps=scene.render.fps,fps_base=scene.render.fps_base)
+        if config.solver_backend=='FIELD':
+            identity=preparation_key(fingerprint,config)
+            if retained is not None and retained.fingerprint==identity:
+                prepared,retained=retained,None
+            else:
+                from .gpu.prepared import prepare_source
+                prepared=prepare_source(build_source(*arrays,config,device),identity,
+                                        config.field_spacing,config.contact_spacing)
+            source=prepared.source
+        else:
+            source=build_source(*arrays,config,device)
+        solver=FlowSolver(config,source,device,start_frame=scene.frame_start,
+                          fps=scene.render.fps,fps_base=scene.render.fps_base,prepared=prepared)
         solver.seek(scene.frame_current)
         host['sf_gpu_uid']=str(uuid4())
         host['sf_gpu_device']=device.name
         host['sf_gpu_error']=''
-        mode=signature[0].display_mode
+        mode=config.display_mode
         if mode!='POINTS': release_point_display(host)
         if mode=='CONNECTED':
             from .gpu_water_display import create_water_display
@@ -103,15 +131,18 @@ def get_runtime(host,scene):
                 for modifier in drops: modifier.show_viewport=True
                 if not drops: create_display(host)
         set_material(host,host.flumen_gpu.material)
-        RUNTIMES[key]=HostRuntime(host,solver,signature,_fingerprint(arrays))
+        RUNTIMES[key]=HostRuntime(host,solver,signature,fingerprint,prepared)
         return solver
     except Exception:
         from .gpu_water_display import release_water_display
         release_water_display(host)
         release_point_display(host)
         if solver is not None: solver.close()
-        else: source.close()
+        elif prepared is None and source is not None: source.close()
+        if prepared is not None: prepared.release()
         raise
+    finally:
+        if retained is not None: retained.release()
 
 
 def evaluate_host(host,scene,frame=None):
@@ -155,20 +186,33 @@ def refresh_points(host):
 def reset_host(host):
     if host is None or not host.get('sf_gpu_host'):
         raise ValueError('Select a GPU Flow host')
-    record=RUNTIMES.pop(host.as_pointer(),None)
-    if record: record.solver.close()
+    key=host.as_pointer()
+    record=RUNTIMES.pop(key,None)
+    if record:
+        # Keep static contacts for get_runtime to reuse if geometry and spacing still match.
+        if record.prepared is not None:
+            stale=_RETAINED.pop(key,None)
+            if stale is not None: stale.release()
+            _RETAINED[key]=record.prepared; record.prepared=None
+        _close(record)
     from .gpu_water_display import release_water_display
     release_water_display(host)
     host['sf_gpu_error']=''
-    return evaluate_host(host,bpy.context.scene)
+    try:
+        return evaluate_host(host,bpy.context.scene)
+    finally:
+        stale=_RETAINED.pop(key,None)
+        if stale is not None: stale.release()
 
 
-def create_gpu_host(source,scene,display_mode='DROPS'):
+def create_gpu_host(source,scene,display_mode='DROPS',solver_backend='LEGACY'):
     global _BUSY
     if source is None or source.type!='MESH' or source.get('sf_gpu_host') or source.get('sf_simulation_host'):
         raise ValueError('Select a stationary collision mesh')
     if display_mode not in ('DROPS','CONNECTED','POINTS'):
         raise ValueError('Unknown water display mode')
+    if solver_backend not in ('LEGACY','FIELD') or (solver_backend=='FIELD' and display_mode!='POINTS'):
+        raise ValueError('The Surface Field backend requires the Points preview')
     from .gpu.device import require_cuda
     require_cuda()
     mesh=bpy.data.meshes.new('GPU Flow Points')
@@ -181,6 +225,7 @@ def create_gpu_host(source,scene,display_mode='DROPS'):
     try:
         host.flumen_gpu.source=source
         host.flumen_gpu.display_mode=display_mode
+        host.flumen_gpu.solver_backend=solver_backend
         host.flumen_gpu.interactions_enabled=display_mode=='CONNECTED'
         host.flumen_gpu.emission_start=scene.frame_start
         host.flumen_gpu.emission_end=scene.frame_end
@@ -191,7 +236,7 @@ def create_gpu_host(source,scene,display_mode='DROPS'):
         return host
     except Exception:
         record=RUNTIMES.pop(host.as_pointer(),None)
-        if record: record.solver.close()
+        if record: _close(record)
         from .gpu_water_display import release_water_display
         release_water_display(host)
         release_point_display(host)
@@ -209,10 +254,12 @@ def create_gpu_host(source,scene,display_mode='DROPS'):
 def release_all():
     from .gpu_water_display import release_water_display,purge_orphan_water_displays
     for record in list(RUNTIMES.values()):
-        record.solver.close()
+        _close(record)
         try: release_water_display(record.host)
         except ReferenceError: pass
     RUNTIMES.clear()
+    for prepared in _RETAINED.values(): prepared.release()
+    _RETAINED.clear()
     release_all_point_displays()
     purge_orphan_water_displays()
 

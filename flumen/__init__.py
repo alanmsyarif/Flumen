@@ -18,10 +18,11 @@ if bpy is not None:
     from .operators import SF_OT_build, SF_OT_rebuild, SF_OT_create_simulation
     from .ui import SF_PT_panel
     from .gpu_properties import SF_GPUSettings
-    from .gpu_operators import SF_OT_create_gpu_flow, SF_OT_reset_gpu_flow
+    from .gpu_operators import SF_OT_create_gpu_flow, SF_OT_create_field_preview, SF_OT_reset_gpu_flow
     from .gpu_ui import SF_PT_gpu
     CLASSES = (SF_OT_build, SF_OT_rebuild, SF_OT_create_simulation, SF_PT_panel,
-               SF_GPUSettings, SF_OT_create_gpu_flow, SF_OT_reset_gpu_flow, SF_PT_gpu)
+               SF_GPUSettings, SF_OT_create_gpu_flow, SF_OT_create_field_preview,
+               SF_OT_reset_gpu_flow, SF_PT_gpu)
 else:
     CLASSES = ()
 

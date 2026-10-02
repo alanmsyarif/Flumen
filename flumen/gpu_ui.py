@@ -12,6 +12,7 @@ class SF_PT_gpu(bpy.types.Panel):
         layout=self.layout; host=context.active_object
         if not host or not host.get('sf_gpu_host'):
             layout.operator('flumen.create_gpu_flow',icon='PARTICLES')
+            layout.operator('flumen.create_field_preview',icon='POINTCLOUD_DATA')
             return
         settings=host.flumen_gpu
         layout.label(text='Stationary surface • live preview')
@@ -30,6 +31,11 @@ class SF_PT_gpu(bpy.types.Panel):
         if settings.display_mode=='POINTS':
             for name in ('solver_backend','point_size','point_color','display_limit'):
                 layout.prop(settings,name)
+        if settings.solver_backend=='FIELD':
+            for name in ('field_spacing','contact_spacing','field_viscosity','surface_tension','resample_target'):
+                layout.prop(settings,name)
+        elif settings.interactions_enabled:
+            layout.label(text='Pairwise backend: bounded neighbors, not for million-particle editing',icon='INFO')
         layout.prop(settings,'interactions_enabled')
         for name in ('mode','particles_per_frame' if settings.mode=='CONTINUOUS' else 'burst_count',
                      'emission_start','emission_end','initial_coating_count','time_scale','capacity','lifetime','seed','radius',
@@ -50,6 +56,11 @@ class SF_PT_gpu(bpy.types.Panel):
             layout.label(text=f'{s.capacity_rejected:,} capacity / {s.source_rejected:,} source rejected')
             layout.label(text=f'{s.solver_ms:.2f} ms solver • {s.transfer_ms:.2f} ms transfer')
             layout.label(text=f'{s.substeps} substeps • {s.limited_count} limited')
+            prepared=record.solver.prepared
+            if prepared is not None:
+                layout.label(text=f'{prepared.chart.operator_spacing*1000:.2f} mm field • '
+                                  f'{prepared.contact.effective_spacing*1000:.2f} mm contact spacing')
+                layout.label(text=f'{s.contact_fallback_count:,} contact fallback • {s.attached_count:,} attached / {s.free_count:,} free')
             if settings.display_mode=='POINTS':
                 layout.label(text=f'{s.live_count:,} simulated • {s.displayed_count:,} displayed')
                 layout.label(text=f'{s.readback_ms:.2f} readback • {s.upload_ms:.2f} upload • {s.draw_ms:.2f} draw ms')

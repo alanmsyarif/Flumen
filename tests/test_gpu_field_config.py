@@ -28,3 +28,16 @@ def test_field_config_bounds():
     for backend, mode in [('NO', 'POINTS'), ('FIELD', 'CONNECTED'), ('FIELD', 'DROPS')]:
         with pytest.raises(ValueError):
             replace(cfg, solver_backend=backend, display_mode=mode).validate()
+
+
+def test_physical_and_preparation_keys_separate_static_and_cosmetic_settings():
+    from dataclasses import replace
+    from flumen.gpu.config import physical_key, preparation_key
+    field = FlowConfig(solver_backend='FIELD', display_mode='POINTS')
+    assert physical_key(replace(field, reconstruction_scale=2.)) == physical_key(field)
+    assert physical_key(replace(field, gravity=(0., 0., -1.))) != physical_key(field)
+    legacy = FlowConfig()
+    assert physical_key(replace(legacy, reconstruction_scale=2.)) != physical_key(legacy)
+    assert preparation_key('g', replace(field, gravity=(0., 0., -1.))) == preparation_key('g', field)
+    assert preparation_key('g', replace(field, field_spacing=.002)) != preparation_key('g', field)
+    assert preparation_key('h', field) != preparation_key('g', field)
