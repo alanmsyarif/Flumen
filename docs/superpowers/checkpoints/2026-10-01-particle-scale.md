@@ -1,6 +1,10 @@
 # Saved checkpoint — million-particle field work
 
-**Updated 2026-10-02: revised Tasks 3-6 complete. Resume at Task 7 when requested.**
+**Updated 2026-10-02: revised Tasks 3-7 complete. Resume at Task 8 when requested.**
+
+Task 7: validated particle caches (`flumen/particle_cache.py`, `flumen/gpu_bake.py`).
+A 1M-particle, 10-frame bake writes 884 MB (about 88 MB per frame) at 1.56 s
+per frame; reading needs no CUDA.
 
 Task 6 outcome: all four 1080p million-particle viewport gates pass with
 background GPU apps closed; the drainage comparison against the reference
